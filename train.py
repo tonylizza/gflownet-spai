@@ -11,7 +11,7 @@ from grid import Grid
 
 size = 16
 
-def plot(samples, env):    
+def plot(samples, env, size):    
     _, ax = plt.subplots(1, 2)
     s = samples.sum(0).view(size, size)
     e = env.reward(torch.eye(env.state_dim)).view(size, size)
@@ -23,12 +23,12 @@ def plot(samples, env):
     
     plt.show()
 
-def train(batch_size, num_epochs):
+def train(size, batch_size, num_epochs, lr):
     env = Grid(size=size)
     forward_policy = ForwardPolicy(env.state_dim, hidden_dim=32, num_actions=env.num_actions)
     backward_policy = BackwardPolicy(env.state_dim, num_actions=env.num_actions)
     model = GFlowNet(forward_policy, backward_policy, env)
-    opt = Adam(model.parameters(), lr=5e-3)
+    opt = Adam(model.parameters(), lr=lr)
     
     for i in (p := tqdm(range(num_epochs))):
         s0 = one_hot(torch.zeros(batch_size).long(), env.state_dim).float()
@@ -44,7 +44,7 @@ def train(batch_size, num_epochs):
 
     s0 = one_hot(torch.zeros(10**4).long(), env.state_dim).float()
     s = model.sample_states(s0, return_log=False)
-    plot(s, env)
+    plot(s, env, size)
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
