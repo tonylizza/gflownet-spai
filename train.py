@@ -1,58 +1,58 @@
 import torch
-import matplotlib.pyplot as plt
-import argparse
-from tqdm import tqdm
 from torch.nn.functional import one_hot
-from gflownet.gflownet import GFlowNet
-from policy import ForwardPolicy, BackwardPolicy
-from gflownet.utils import trajectory_balance_loss
 from torch.optim import Adam
-from grid import Grid
+from tqdm import tqdm
+from preconditioner import PreconditionerEnv
+from policy import ForwardPolicy, BackwardPolicy
+from gflownet.gflownet import GFlowNet
+from gflownet.utils import trajectory_balance_loss, market_matrix_to_sparse_tensor
 
-size = 16
-
-def plot(samples, env, size):    
-    _, ax = plt.subplots(1, 2)
-    s = samples.sum(0).view(size, size)
-    e = env.reward(torch.eye(env.state_dim)).view(size, size)
-
-    ax[0].matshow(s.numpy())
-    ax[0].set_title("Samples")
-    ax[1].matshow(e.numpy())
-    ax[1].set_title("Environment")
+def train(matrix_path: str, batch_size: int, num_epochs: int, lr: float):
+    # Load the initial matrix from a file
+    initial_matrix = market_matrix_to_sparse_tensor(matrix_path)
+    matrix_size = initial_matrix.size(0)
     
-    plt.show()
-
-def train(size, batch_size, num_epochs, lr):
-    env = Grid(size=size)
-    forward_policy = ForwardPolicy(env.state_dim, hidden_dim=32, num_actions=env.num_actions)
-    backward_policy = BackwardPolicy(env.state_dim, num_actions=env.num_actions)
+    # Initialize the environment and policies
+    env = PreconditionerEnv(matrix_size=matrix_size, initial_matrix=initial_matrix)
+    node_features = 1  # Assuming each node has a single feature, can be adjusted
+    hidden_dim = 32
+    forward_policy = ForwardPolicy(node_features=node_features, hidden_dim=hidden_dim, num_actions=env.num_actions)
+    backward_policy = BackwardPolicy(matrix_size=matrix_size, num_actions=env.num_actions)
+    
+    # Initialize the GFlowNet model
     model = GFlowNet(forward_policy, backward_policy, env)
     opt = Adam(model.parameters(), lr=lr)
     
-    for i in (p := tqdm(range(num_epochs))):
+    for epoch in (p := tqdm(range(num_epochs))):
+        # Initialize the starting states
         s0 = one_hot(torch.zeros(batch_size).long(), env.state_dim).float()
+        # Sample final states and log information
         s, log = model.sample_states(s0, return_log=True)
+        
+        # Calculate the trajectory balance loss
         loss = trajectory_balance_loss(log.total_flow,
                                        log.rewards,
                                        log.fwd_probs,
                                        log.back_probs)
+        
+        # Backpropagation and optimization step
         loss.backward()
         opt.step()
         opt.zero_grad()
-        if i % 10 == 0: p.set_description(f"{loss.item():.3f}")
-
+        
+        if epoch % 10 == 0:
+            p.set_description(f"Epoch {epoch} Loss: {loss.item():.3f}")
+    
+    # Sample and plot final states
     s0 = one_hot(torch.zeros(10**4).long(), env.state_dim).float()
     s = model.sample_states(s0, return_log=False)
-    plot(s, env, size)
-    
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--batch_size", type=int, default=256)
-    parser.add_argument("--num_epochs", type=int, default=1000)
+    # Implement your plot function or use another way to visualize the results
+    # plot(s, env, matrix_size)
 
-    args = parser.parse_args()
-    batch_size = args.batch_size
-    num_epochs = args.num_epochs
-    
-    train(batch_size, num_epochs)
+# Example usage
+matrix_path = '../hangGlider_3/hangGlider_3.mtx'  # Update this with your file path
+batch_size = 32
+num_epochs = 1000
+lr = 0.001
+
+train(matrix_path, batch_size, num_epochs, lr)
