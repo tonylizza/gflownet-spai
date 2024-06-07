@@ -22,10 +22,10 @@ class GFlowNet(nn.Module):
 
         mask = mask.unsqueeze(1)
             
-        print(f"Expanded mask shape: {mask.shape}")  # Check the expanded mask shape
+        #print(f"Expanded mask shape: {mask.shape}")  # Check the expanded mask shape
 
         probs = mask * probs
-        print(f"Probs with mask applied: {probs.shape}")  # Check masked probabilities
+        print(f"Probs with mask applied: {probs}")  # Check masked probabilities
 
         # Check if there is only one row
         if probs.size(0) == 1:
@@ -64,6 +64,7 @@ class GFlowNet(nn.Module):
         
         for data in data_list:
             probs, alpha = self.forward_policy(data)
+            print(f"Probs from Policy Shape: {probs.shape}")
             print(f"Probs from Policy: {probs}")
             all_probs.append(probs)
             alphas.append(alpha)

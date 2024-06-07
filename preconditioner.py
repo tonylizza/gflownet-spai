@@ -102,7 +102,7 @@ class PreconditionerEnv(Env):
 
     def mask(self, s: Tensor) -> Tensor:
         # Implement your masking logic here
-        # This is an example implementation that allows all actions
+        # This is an example implementation that allows all actions. We can implement this later if it is needed.
         return torch.ones(len(s), self.num_actions)
 
     def evaluate_preconditioner(self, updated_matrix: Tensor, original_matrix: Tensor, orig_residual: float, orig_flops: int, alpha: float) -> float:

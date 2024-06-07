@@ -30,7 +30,7 @@ class ForwardPolicy(nn.Module):
 class ForwardPolicy(nn.Module):
     def __init__(self, node_features: int, hidden_dim: int, num_actions: int):
         super().__init__()
-        self.hid = 8
+        self.hid = hidden_dim
         self.in_head = 8
         self.out_head = 1
         self.gat1 = GATv2Conv(node_features, self.hid, heads=self.in_head)
@@ -52,53 +52,30 @@ class ForwardPolicy(nn.Module):
 
 
 '''    
-class BackwardPolicy:
-    def __init__(self, matrix_size, num_actions):
-        self.matrix_size = matrix_size
-        self.num_actions = num_actions
+#Possible new class for forward policy that leverages the 
+class ForwardPolicy(nn.Module):
+    def __init__(self, node_features: int, edge_features: int, hidden_dim: int, num_actions: int):
+        super().__init__()
+        self.hid = hidden_dim
+        self.in_head = 8
+        self.out_head = 1
+        self.gat1 = GATv2Conv(node_features, self.hid, heads=self.in_head, edge_dim=edge_features)
+        self.gat2 = GATv2Conv(self.hid * self.in_head, num_actions, heads=self.out_head, edge_dim=edge_features)
+        self.alpha = torch.nn.Parameter(torch.tensor(0.0))  # Starts with equal weighting for reward function mixing parameter
     
-    def __call__(self, s, env):
-        # s: current state tensor
-        # env: the environment object with current matrix state
-        #Policy code needs to be changed to send back back probs for a collection of samples and idx needs to be fixed. Also, give these variables more descriptive names than just s. It's like you're trying to make it harder on yourself.
-
-        batch_size = s.shape[0]
-        print(f"S for back policy: {len(s)}")
-        # Determine the state index
-        idx = s.argmax(dim=-1)
-        print(f"idx for back policy: {idx.shape}")
-        # Initialize probabilities
-        probs = torch.ones(batch_size, self.num_actions) * 0.5
-        print(f"probs shape for back policy: {probs.shape}")
-        # Calculate the probability of transitioning to previous states
-        for i in range(batch_size):
-
-            # If idx[i] has more than one element, reshape or reduce it
-            # Assuming idx[i] should be a single value or we should select one value
-            if idx[i].numel() > 1:
-                # Flatten and get the first element (modify this as needed for your logic)
-                idx_i = idx[i].view(-1)[0].item()
-            else:
-                idx_i = idx[i].item()
-
-            #row, col = divmod(idx[i].item(), self.matrix_size)
-            row, col = divmod(idx_i, self.matrix_size)
-            if (row, col, 0) in env.removed_entries:
-                # Higher probability if the entry was previously removed. Fix this later to have realistic values.
-                #probs[i, idx[i]] = 0.8
-                probs[i, idx_i] = 0.8
+    def forward(self, data: Data) -> Tuple[Tensor, Tensor]:
+        x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
+        print(f"Input x dimensions: {x.shape}")
+        print(f"Input edge_index dimensions: {edge_index.shape}")
+        print(f"Input edge_attr dimensions: {edge_attr.shape}")
         
-        # Set probabilities for edge cases
-        #at_top_edge = idx < self.matrix_size
-        #at_left_edge = (idx > 0) & (idx % self.matrix_size == 0)
-        #probs[at_left_edge] = torch.Tensor([1, 0, 0])
-        #probs[at_top_edge] = torch.Tensor([0, 1, 0])
-        probs[:, -1] = 0  # Disregard termination
+        x = torch.relu(self.gat1(x, edge_index, edge_attr))
+        print(f"After GATConv1 x dimensions: {x.shape}")
         
-        # Normalize probabilities
-        probs = probs / probs.sum(dim=1, keepdim=True)
+        x = torch.relu(self.gat2(x, edge_index, edge_attr))
+        print(f"After GATConv2 x dimensions: {x.shape}")
         
-        return probs
+        return torch.softmax(x, dim=1), torch.sigmoid(self.alpha)
 '''
             
 class BackwardPolicy:
