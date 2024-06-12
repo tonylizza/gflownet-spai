@@ -10,7 +10,8 @@ from typing import List
 class GFlowNet(nn.Module):
     def __init__(self, forward_policy, backward_policy, env):
         super().__init__()
-        self.total_flow = Parameter(torch.ones(1))
+        #self.total_flow = Parameter(torch.ones(1))
+        self.register_buffer('total_flow', torch.ones(1))
         self.forward_policy = forward_policy
         self.backward_policy = backward_policy
         self.env = env
@@ -19,6 +20,7 @@ class GFlowNet(nn.Module):
         mask = self.env.mask(s)
         print(f"Original mask shape: {mask.shape}")  # Check the mask shape
         
+        print(f"probs before normalization: {probs}")
 
         mask = mask.unsqueeze(1)
             
@@ -31,7 +33,7 @@ class GFlowNet(nn.Module):
         if probs.size(0) == 1:
             summed_probs = probs
         else:
-            summed_probs = probs.sum(1)
+            summed_probs = probs.sum(2)
 
         print(f"Summed probs: {summed_probs}")  # Check sum of probabilities
 
@@ -47,16 +49,16 @@ class GFlowNet(nn.Module):
 
         return normalized_probs
     
-    def forward_probs(self, s):
+    def forward_probs(self, s, actions):
         """
         Returns a vector of probabilities over actions in a given state.
         
         Args:
             s: An NxD matrix representing N states
+            actions: A list containing the actions for all trajectory samples to this point.
         """
         print("Forward Probs Logging")
         print(f"Len of S for iteration: {len(s)}")
-
 
         data_list = self.state_to_data(s)
         all_probs = []
@@ -65,19 +67,35 @@ class GFlowNet(nn.Module):
         for data in data_list:
             probs, alpha = self.forward_policy(data)
             print(f"Probs from Policy Shape: {probs.shape}")
-            print(f"Probs from Policy: {probs}")
             all_probs.append(probs)
             alphas.append(alpha)
         # Cat probabilities on dim 0 to restore N rows from the creation of the list.
         #probs = torch.cat(all_probs, dim=0)
         probs = torch.stack(all_probs)
-        #print(f"probs cat on dim zero:{probs.shape} ")
+        mask = torch.ones_like(probs)
+        if actions:
+            actions = torch.stack(actions, dim=0).t()
+            print(f"actions shape for mask in forward_probs: {actions.shape}")
+            # Ensure actions tensor is 2D for advanced indexing
+            if actions.dim() == 1:
+                actions = actions.unsqueeze(1)
+
+            for i in range(actions.shape[0]):
+                for j in range(actions.shape[1]):
+                    mask[i, 0, actions[i, j]] = 0
+                    #if actions[i, j] < probs.size(1):  # Check if the action index is within bounds
+                        #mask[i, 0, actions[i, j]] = 0  # Assuming actions are single values in a column vector
+        else:
+            pass
+        probs = probs * mask
+        print(f"mask for probs :{mask} ")
         alpha = torch.stack(alphas).mean()  # Assuming you want to average the alpha values
         
         return self.mask_and_normalize(s, probs), alpha
     
     def sample_states(self, s0, return_log=False):
         s = [matrix.clone() for matrix in s0]
+
         done = torch.BoolTensor([False] * len(s))
         cumulative_actions = [[] for _ in range(len(s))]
         log = Log(s0, self.backward_policy, self.total_flow, self.env) if return_log else None
@@ -87,7 +105,9 @@ class GFlowNet(nn.Module):
             done_iterations += 1
 
             #Generate actions for all samples for logging
-            probs_all, _ = self.forward_probs(s)
+            print(f"Type for _actions: {type(log._actions)}")
+            probs_all, _ = self.forward_probs(s, log._actions)
+            print(f"Probs from Policy: {probs_all}")
             actions_all = Categorical(probs_all).sample()
 
             if actions_all.dim() == 0:
@@ -172,19 +192,20 @@ class GFlowNet(nn.Module):
                 raise ValueError(f"Tensor at index {i} is not a sparse tensor.")
             
             current_matrix = s[i]
-            print(f"Current Matrix State to Data: {current_matrix.shape}")
+            print(f"Current Matrix State to Data: {current_matrix}")
             edge_index = current_matrix._indices()
             edge_attr = current_matrix._values()
             num_nodes = current_matrix.size(0)
-            x = torch.ones((num_nodes, 1))  # Example node features, you may adjust this as needed
-            
+            #x = torch.ones((num_nodes, 1))  # Example node features, you may adjust this as needed
+            x = torch.ones((324, 1))
             data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
             data_list.append(data)
             
             print(f"Length of data_list: {len(data_list)}")
             print(f"Data object {i} - x dimensions: {data.x.shape}")
-            print(f"Data object {i} - edge_index dimensions: {data.edge_index.shape}")
-            print(f"Data object {i} - edge_attr dimensions: {data.edge_attr.shape}")
+            print(f"Data object {i} - x values: {data.x}")
+            print(f"Data object {i} - edge_index dimensions: {data.edge_index}")
+            print(f"Data object {i} - edge_attr dimensions: {data.edge_attr}")
         
         return data_list
 

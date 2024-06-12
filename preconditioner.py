@@ -35,6 +35,9 @@ class PreconditionerEnv(Env):
         print(f"Batch size: {batch_size}")
         updated_states = []
 
+        for sparse in sparse_matrices:
+            print(f"Sparse Shape: {sparse.shape}")
+
         for i in range(batch_size):
             print(f"Actions[i] shape: {len(actions[i])}")
 
@@ -53,13 +56,20 @@ class PreconditionerEnv(Env):
                     current_indices = current_indices[:, ~idx_to_remove]
                     current_values = current_values[~idx_to_remove]
 
-            current_matrix = torch.sparse_coo_tensor(current_indices, current_values, sparse_matrices[i].size()).coalesce()
+            #current_matrix = torch.sparse_coo_tensor(current_indices, current_values, sparse_matrices[i].size()).coalesce()
+            #updated_matrix = torch.sparse_coo_tensor(current_matrix._indices(), current_matrix._values(), (1, self.matrix_size * self.matrix_size)).coalesce()
+            #updated_matrix = torch.sparse_coo_tensor(current_indices, current_values, sparse_matrices[i].size()).coalesce()
+            # Flatten the 2D indices into 1D indices for the output vector of size [1, 324]
+            flattened_indices = current_indices[0] * self.matrix_size + current_indices[1]
+
+            # Create the updated sparse tensor with a shape (1, self.matrix_size * self.matrix_size)
             updated_matrix = torch.sparse_coo_tensor(
-                current_matrix._indices(),
-                current_matrix._values(),
+                torch.stack([torch.zeros_like(flattened_indices), flattened_indices]),  # Adding a 0 dimension for the batch size
+                current_values,
                 (1, self.matrix_size * self.matrix_size)
             ).coalesce()
 
+            print(f"Updated Matrix Shape {updated_matrix.shape}")
             updated_states.append(updated_matrix)
         
         return updated_states

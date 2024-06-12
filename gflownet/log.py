@@ -4,12 +4,13 @@ from typing import Tuple, List
 
 from .utils import concatenate_sparse_tensors
 from .utils import SparseTensorManipulator
-from .utils import resize_sparse_tensor
+from .utils import resize_sparse_tensor, resize_sparse_tensor_to_flat
 
 class Log:
     def __init__(self, s0, backward_policy, total_flow, env):
         #self._traj = [s0]
-        self._traj = [torch.stack(s0)]
+        resized_s0 = [resize_sparse_tensor_to_flat(i, (1, 324)) for i in s0]
+        self._traj = [torch.stack(resized_s0)]
         self._fwd_probs = []
         self._back_probs = None
         self._actions = []
@@ -151,17 +152,17 @@ class Log:
         terminated = (actions == -1) | (actions == self.env.num_actions - 1)
         print(f"Terminated in Back Probs shape: {terminated.shape}")
         zero_to_n = torch.arange(len(terminated))
-        actions_to_n = torch.arange(len(actions[1]))
+        #actions_to_n = torch.arange(len(actions[1]))
         print(f"Shape of S in back_probs: {s.shape}")
-        print(f"Zero to n shape: {zero_to_n.shape}, {zero_to_n}")
+        #print(f"Zero to n shape: {zero_to_n.shape}, {zero_to_n}")
         #back_probs = self.backward_policy(s, self.env) * self.env.mask(prev_s)
         back_probs = self.backward_policy(s, self.env, terminated)
         print(f"Env Prevs Mask Shape {self.env.mask(prev_s).shape}")
         print(f"Back Probs Shape before where: {back_probs.shape}")        
-        print(f"back probs subset shape before where: {back_probs[zero_to_n].shape}")
+        #print(f"back probs subset shape before where: {back_probs[zero_to_n].shape}")
         #This is not what we want. It should be a tensor that has dim 0 of batch size and dim 1 of probs. 
         #back_probs = torch.where(terminated, 1, back_probs[zero_to_n, actions])
-        back_probs = torch.where(terminated, 1, back_probs)
+        #back_probs = torch.where(terminated, 1, back_probs)
         print(f"back probs shape after where: {back_probs.shape}")
         self._back_probs = back_probs.reshape(self.num_samples, -1)
         

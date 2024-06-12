@@ -58,7 +58,7 @@ def market_matrix_to_sparse_tensor(file_path: str) -> Tensor:
     sparse_tensor = torch.sparse_coo_tensor(indices, values, matrix.shape)
     
     return sparse_tensor
-
+'''
 def resize_sparse_tensor(sparse_tensor: torch.Tensor, new_size: tuple) -> torch.Tensor:
     """
     Resizes a sparse tensor to the new size without converting it to a dense tensor.
@@ -81,6 +81,86 @@ def resize_sparse_tensor(sparse_tensor: torch.Tensor, new_size: tuple) -> torch.
     new_sparse_tensor = torch.sparse_coo_tensor(indices, values, new_size, dtype=torch.double)
     
     return new_sparse_tensor
+'''
+
+def resize_sparse_tensor(sparse_tensor: torch.Tensor, new_size: tuple) -> torch.Tensor:
+    """
+    Resizes a sparse tensor to the new size without converting it to a dense tensor.
+    
+    Args:
+        sparse_tensor (torch.Tensor): The original sparse tensor.
+        new_size (tuple): The desired size of the new sparse tensor.
+    
+    Returns:
+        torch.Tensor: The new sparse tensor with the specified size.
+    """
+    if not sparse_tensor.is_sparse:
+        raise ValueError("The input tensor must be a sparse tensor.")
+    
+    # Extract the indices and values
+    indices = sparse_tensor._indices()
+    values = sparse_tensor._values()
+    
+    old_size = sparse_tensor.size()
+    old_num_elements = old_size[-1]
+    new_num_rows, new_num_cols = new_size
+    
+    if old_num_elements != new_num_rows * new_num_cols:
+        raise ValueError("The total number of elements must match between the old and new sizes.")
+    
+    # Flatten the indices for the old 1D shape to 2D for the new shape
+    if len(old_size) == 2 and old_size[0] == 1:
+        linear_indices = indices[1]  # Only the second row has relevant indices in the [1, 324] shape
+        row_indices = linear_indices // new_num_cols
+        col_indices = linear_indices % new_num_cols
+        new_indices = torch.stack([row_indices, col_indices], dim=0)
+    else:
+        raise ValueError("Unsupported resize operation.")
+    
+    # Create a new sparse tensor with the same non-zero elements but a different size
+    new_sparse_tensor = torch.sparse_coo_tensor(new_indices, values, new_size, dtype=sparse_tensor.dtype).coalesce()
+    
+    return new_sparse_tensor
+    
+def resize_sparse_tensor_to_flat(sparse_tensor: torch.Tensor, new_size: tuple) -> torch.Tensor:
+    """
+    Resizes a sparse tensor to the new size without converting it to a dense tensor.
+    
+    Args:
+        sparse_tensor (torch.Tensor): The original sparse tensor.
+        new_size (tuple): The desired size of the new sparse tensor.
+    
+    Returns:
+        torch.Tensor: The new sparse tensor with the specified size.
+    """
+    if not sparse_tensor.is_sparse:
+        raise ValueError("The input tensor must be a sparse tensor.")
+    
+    # Extract the indices and values
+    indices = sparse_tensor._indices()
+    values = sparse_tensor._values()
+    
+    old_size = sparse_tensor.size()
+    new_num_elements = new_size[-1]
+
+    if old_size[0] * old_size[1] != new_num_elements:
+        raise ValueError("The total number of elements must match between the old and new sizes.")
+    
+    # Convert 2D indices to 1D indices for the new shape
+    if len(old_size) == 2 and old_size[0] == new_size[1] // old_size[1]:
+        row_indices = indices[0]
+        col_indices = indices[1]
+        linear_indices = row_indices * old_size[1] + col_indices
+        new_indices = torch.stack([torch.zeros_like(linear_indices), linear_indices], dim=0)
+    else:
+        raise ValueError("Unsupported resize operation.")
+    
+    # Create a new sparse tensor with the same non-zero elements but a different size
+    new_sparse_tensor = torch.sparse_coo_tensor(new_indices, values, new_size, dtype=sparse_tensor.dtype).coalesce()
+    
+    return new_sparse_tensor
+
+
 
 def sparse_one_hot(indices, num_classes):
     """

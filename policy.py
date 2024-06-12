@@ -3,7 +3,7 @@ from torch import nn, Tensor
 from torch.nn.functional import relu
 from torch.nn.functional import softmax
 from torch_geometric.data import Data
-from torch_geometric.nn import GATv2Conv
+from torch_geometric.nn import GATv2Conv, global_mean_pool
 
 from typing import Tuple
 
@@ -26,7 +26,6 @@ class ForwardPolicy(nn.Module):
         print(f"After GATConv2 x dimensions: {x.shape}")
         return softmax(x, dim=1), torch.sigmoid(self.alpha)
 '''
-
 class ForwardPolicy(nn.Module):
     def __init__(self, node_features: int, hidden_dim: int, num_actions: int):
         super().__init__()
@@ -35,7 +34,26 @@ class ForwardPolicy(nn.Module):
         self.out_head = 1
         self.gat1 = GATv2Conv(node_features, self.hid, heads=self.in_head)
         self.gat2 = GATv2Conv(self.hid * self.in_head, num_actions, heads=self.out_head)
+        #self.fc = nn.Linear(num_actions - 1, num_actions)
+        self.lin = torch.nn.Linear(hidden_dim, num_actions)
         self.alpha = torch.nn.Parameter(torch.tensor(0.0))  # Starts with equal weighting for reward function mixing parameter
+
+        # Initialize parameters
+        #self.init_weights()
+    
+    def init_weights(self):
+        for m in self.modules():
+            print(f"Module: {m}")
+            if isinstance(m, GATv2Conv):
+                #if m.lin_r.bias is not None:
+                torch.nn.init.constant_(m.lin_r.bias, 0.0)
+                print(f"Initialized lin_r.bias as {m.lin_r.bias}")
+                #if m.lin_r.weight is not None:
+                torch.nn.init.xavier_uniform_(m.lin_r.weight)
+                print(f"Initialized lin_r.weight as {m.lin_r.weight}")
+                #if m.att is not None:
+                torch.nn.init.xavier_uniform_(m.att)
+                print(f"Initialized m.att weight as {m.att}")
     
     def forward(self, data: Data) -> Tuple[Tensor, Tensor]:
         x, edge_index = data.x, data.edge_index
@@ -46,6 +64,12 @@ class ForwardPolicy(nn.Module):
         print(f"After GATConv1 x dimensions: {x.shape}")
         
         x = torch.relu(self.gat2(x, edge_index))
+        # Apply global mean pooling to aggregate node features
+        x = global_mean_pool(x, batch=torch.zeros(x.size(0), dtype=torch.long, device=x.device))
+        
+        #x = self.lin(x)
+        #Map GAT2 back to fully connected layer to get to [1,325]
+        #x = self.fc(x)
         print(f"After GATConv2 x dimensions: {x.shape}")
         
         return torch.softmax(x, dim=1), torch.sigmoid(self.alpha)
