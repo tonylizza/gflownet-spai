@@ -71,6 +71,8 @@ class GFlowNet(nn.Module):
             alphas.append(alpha)
         # Cat probabilities on dim 0 to restore N rows from the creation of the list.
         #probs = torch.cat(all_probs, dim=0)
+
+        init_mask_for_s = torch.stack([self.env.init_mask for _ in range(len(s))])
         probs = torch.stack(all_probs)
         mask = torch.ones_like(probs)
         if actions:
@@ -87,6 +89,8 @@ class GFlowNet(nn.Module):
                         #mask[i, 0, actions[i, j]] = 0  # Assuming actions are single values in a column vector
         else:
             pass
+
+        mask = init_mask_for_s * mask
         probs = probs * mask
         print(f"mask for probs :{mask} ")
         alpha = torch.stack(alphas).mean()  # Assuming you want to average the alpha values
@@ -187,25 +191,25 @@ class GFlowNet(nn.Module):
         data_list = []
         
         for i, current_matrix in enumerate(s):
-            print(f"Current Matrix Size Comparison {i}: {current_matrix.size()}")
+            #print(f"Current Matrix Size Comparison {i}: {current_matrix.size()}")
             if not current_matrix.is_sparse:
                 raise ValueError(f"Tensor at index {i} is not a sparse tensor.")
             
             current_matrix = s[i]
-            print(f"Current Matrix State to Data: {current_matrix}")
+            #print(f"Current Matrix State to Data: {current_matrix}")
             edge_index = current_matrix._indices()
             edge_attr = current_matrix._values()
             num_nodes = current_matrix.size(0)
             #x = torch.ones((num_nodes, 1))  # Example node features, you may adjust this as needed
             x = torch.ones((324, 1))
-            data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
+            data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr.float())
             data_list.append(data)
             
             print(f"Length of data_list: {len(data_list)}")
             print(f"Data object {i} - x dimensions: {data.x.shape}")
-            print(f"Data object {i} - x values: {data.x}")
-            print(f"Data object {i} - edge_index dimensions: {data.edge_index}")
-            print(f"Data object {i} - edge_attr dimensions: {data.edge_attr}")
+            #print(f"Data object {i} - x values: {data.x}")
+            #print(f"Data object {i} - edge_index dimensions: {data.edge_index}")
+            #print(f"Data object {i} - edge_attr dimensions: {data.edge_attr}")
         
         return data_list
 

@@ -32,10 +32,10 @@ class ForwardPolicy(nn.Module):
         self.hid = hidden_dim
         self.in_head = 8
         self.out_head = 1
-        self.gat1 = GATv2Conv(node_features, self.hid, heads=self.in_head)
-        self.gat2 = GATv2Conv(self.hid * self.in_head, num_actions, heads=self.out_head)
+        self.gat1 = GATv2Conv(node_features, self.hid, edge_dim=1, heads=self.in_head)
+        self.gat2 = GATv2Conv(self.hid * self.in_head, num_actions, edge_dim=1, heads=self.out_head)
         #self.fc = nn.Linear(num_actions - 1, num_actions)
-        self.lin = torch.nn.Linear(hidden_dim, num_actions)
+        #self.lin = torch.nn.Linear(hidden_dim, num_actions)
         self.alpha = torch.nn.Parameter(torch.tensor(0.0))  # Starts with equal weighting for reward function mixing parameter
 
         # Initialize parameters
@@ -56,14 +56,14 @@ class ForwardPolicy(nn.Module):
                 print(f"Initialized m.att weight as {m.att}")
     
     def forward(self, data: Data) -> Tuple[Tensor, Tensor]:
-        x, edge_index = data.x, data.edge_index
+        x, edge_index, edge_attr= data.x, data.edge_index, data.edge_attr
         print(f"Input x dimensions: {x.shape}")
         print(f"Input edge_index dimensions: {edge_index.shape}")
         
-        x = torch.relu(self.gat1(x, edge_index))
+        x = torch.relu(self.gat1(x, edge_index, edge_attr))
         print(f"After GATConv1 x dimensions: {x.shape}")
         
-        x = torch.relu(self.gat2(x, edge_index))
+        x = torch.relu(self.gat2(x, edge_index, edge_attr))
         # Apply global mean pooling to aggregate node features
         x = global_mean_pool(x, batch=torch.zeros(x.size(0), dtype=torch.long, device=x.device))
         

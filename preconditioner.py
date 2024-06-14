@@ -13,6 +13,8 @@ class PreconditionerEnv(Env):
         self.num_actions = (matrix_size**2) + 1  # Number of actions is the number of entries in the matrix plus one for terminal action.
         self.matrix = initial_matrix.clone()
         self.original_matrix = initial_matrix.clone()
+        self.init_mask = self.create_mask_from_sparse_matrix(self.original_matrix)
+
 
         # Extract edge_index and edge_attr directly from the sparse matrix
         edge_index = self.matrix._indices()
@@ -104,7 +106,7 @@ class PreconditionerEnv(Env):
         v = torch.ones(self.matrix_size, dtype=torch.float64)
         sparse_identity = torch.sparse_coo_tensor(i, v, (self.matrix_size, self.matrix_size))
         product = torch.mm(updated_matrix, original_matrix)
-        print(f"Product {product}")
+        #print(f"Product {product}")
         residual = torch.norm(product - sparse_identity)
         print(f"residual {residual}")
 
@@ -115,6 +117,42 @@ class PreconditionerEnv(Env):
         # This is an example implementation that allows all actions. We can implement this later if it is needed.
         return torch.ones(len(s), self.num_actions)
 
+    
+    def create_mask_from_sparse_matrix(self, sparse_matrix):
+        """
+        Create a mask that will keep non-zero values and zero out indices that map to zero values in the sparse matrix.
+        
+        Args:
+            sparse_matrix (torch.sparse.FloatTensor): The sparse matrix.
+            
+        Returns:
+            torch.Tensor: A mask of the same size as the sparse matrix.
+        """
+        if not sparse_matrix.is_sparse:
+            raise ValueError("The input tensor must be a sparse tensor.")
+        
+        # Extract the size of the sparse matrix
+        size = sparse_matrix.size()
+        
+        # Initialize a mask with zeros
+        mask = torch.zeros(size, dtype=torch.float32)
+        
+        # Get the indices of non-zero elements in the sparse matrix
+        indices = sparse_matrix._indices()
+        
+        # Set the corresponding entries in the mask to one
+        mask[indices[0], indices[1]] = 1
+
+        flat_mask = mask.view(-1)
+
+        resized_mask = flat_mask.view((1, size[0] * size[1]))
+
+        additional_entry = torch.tensor([[1]], dtype=torch.float32)
+
+        extended_mask = torch.cat((resized_mask, additional_entry), dim=1)
+        #print(f"extended_mask {extended_mask}")
+        return extended_mask
+    
     def evaluate_preconditioner(self, updated_matrix: Tensor, original_matrix: Tensor, orig_residual: float, orig_flops: int, alpha: float) -> float:
 
         

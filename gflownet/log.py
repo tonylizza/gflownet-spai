@@ -113,8 +113,8 @@ class Log:
     @property
     def fwd_probs(self):
         if isinstance(self._fwd_probs, list):
-            for i, tensor in enumerate(self._fwd_probs):
-                print(f"Shape of tensor {i}: {tensor}")
+            #for i, tensor in enumerate(self._fwd_probs):
+            #    print(f"Shape of tensor {i}: {tensor}")
             print(f"Fwd Probs Shape before cat: {len(self._fwd_probs)})")
             self._fwd_probs = torch.stack(self._fwd_probs, dim=0)
             self._fwd_probs = self._fwd_probs.t()
@@ -124,8 +124,8 @@ class Log:
     @property
     def actions(self):
         if isinstance(self._actions, list):
-            for i, tensor in enumerate(self._actions):
-                print(f"Shape of tensor {i}: {tensor}")
+            #for i, tensor in enumerate(self._actions):
+            #    print(f"Shape of tensor {i}: {tensor}")
 
             self._actions = torch.stack(self._actions, dim=0)
         return self._actions

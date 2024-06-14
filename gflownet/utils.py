@@ -162,6 +162,7 @@ def resize_sparse_tensor_to_flat(sparse_tensor: torch.Tensor, new_size: tuple) -
 
 
 
+
 def sparse_one_hot(indices, num_classes):
     """
     Creates a sparse one-hot encoding for given indices.
