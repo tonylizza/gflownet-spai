@@ -20,9 +20,9 @@ class SparseTensorManipulator:
         # Adjust the indices after slicing
         new_indices[1] -= start
 
-        print(f"End start: {end, start}")
-        print(f"New indices shape {new_indices.shape}")
-        print(f"New values shape {new_values}")
+        #print(f"End start: {end, start}")
+        #print(f"New indices shape {new_indices.shape}")
+        #print(f"New values shape {new_values}")
 
         # Create the new sparse tensor with adjusted indices and values
         new_sparse_tensor = torch.sparse_coo_tensor(new_indices, new_values, (self.sparse_tensor.size(0), end - start, self.sparse_tensor.size(2)))

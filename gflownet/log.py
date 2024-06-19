@@ -37,15 +37,15 @@ class Log:
             done: An Nx1 Boolean vector indicating which samples are complete
             (True) and which are incomplete (False)
         """
-        print(f"s length: {len(s)}")
-        print(f"probs log shape: {probs.shape}")
-        print(f"actions shape: {actions.shape}")
-        print(f"done shape: {done.shape}")
+        #print(f"s length: {len(s)}")
+        #print(f"probs log shape: {probs.shape}")
+        #print(f"actions shape: {actions.shape}")
+        #print(f"done shape: {done.shape}")
         
         just_finished = actions == probs.shape[-1] - 1
         just_finished = just_finished.view(-1)  # Flatten to 1D
-        print(f"just_finished shape: {just_finished.shape}")
-        print(f"Actions for mask: {actions}")
+        #print(f"just_finished shape: {just_finished.shape}")
+        #print(f"Actions for mask: {actions}")
         active = ~done.clone()
     
 
@@ -90,11 +90,11 @@ class Log:
             reward_matrices = [resize_sparse_tensor(s[i], (self.env.matrix_size, self.env.matrix_size)) for i in reward_indices]
             #Convert to 18x18 before calculating reward
             #reward_matrices = [s[i].to_dense().view(18, 18) for i in reward_indices]
-            print(f"reward_matrices shape {len(reward_matrices)}")
-            print(f"reward_matrices full {reward_matrices}")
-            print(f"len(self._traj) {len(self._traj)}")
+            #print(f"reward_matrices shape {len(reward_matrices)}")
+            #print(f"reward_matrices full {reward_matrices}")
+            #print(f"len(self._traj) {len(self._traj)}")
             rewards = torch.tensor([self.env.reward(matrix, len(self._traj)) for matrix in reward_matrices], dtype=self.rewards.dtype)
-            print(f"reward values: {rewards}")
+            #print(f"reward values: {rewards}")
 
             self.rewards[reward_indices] = rewards
         
@@ -104,10 +104,10 @@ class Log:
         if isinstance(self._traj, list):
             #print(f"self._traj elements: {[type(elem) for elem in self._traj]}")
             self._traj = [tensor.to_dense() if tensor.is_sparse else tensor for tensor in self._traj]
-            print(f"self._traj shapes: {[tensor.shape for tensor in self._traj]}")
+            #print(f"self._traj shapes: {[tensor.shape for tensor in self._traj]}")
             #self._traj = torch.cat(self._traj, dim=1)[:, :-1, :]
             self._traj = torch.cat(self._traj, dim=1)
-            print(f"Shape after concatenation: {self._traj.shape}")
+            #print(f"Shape after concatenation: {self._traj.shape}")
         return self._traj    
 
     @property
@@ -115,10 +115,10 @@ class Log:
         if isinstance(self._fwd_probs, list):
             #for i, tensor in enumerate(self._fwd_probs):
             #    print(f"Shape of tensor {i}: {tensor}")
-            print(f"Fwd Probs Shape before cat: {len(self._fwd_probs)})")
+            #print(f"Fwd Probs Shape before cat: {len(self._fwd_probs)})")
             self._fwd_probs = torch.stack(self._fwd_probs, dim=0)
             self._fwd_probs = self._fwd_probs.t()
-            print(f"Fwd Probs Shape before traj balance: {self._fwd_probs.shape}")
+            #print(f"Fwd Probs Shape before traj balance: {self._fwd_probs.shape}")
         return self._fwd_probs
     
     @property
@@ -135,35 +135,35 @@ class Log:
         if self._back_probs is not None:
             return self._back_probs
         
-        print(f"Shape of Trajectory at Start of back_probs method {self.traj.shape}")
+        #print(f"Shape of Trajectory at Start of back_probs method {self.traj.shape}")
         #s = self.traj[:, 1:, :].reshape(-1, self.env.state_dim)
         s = self.traj[:, 1:, :]
-        print(f"Shape of S--Trajectory back_probs reshape: {s.shape}")
+        #print(f"Shape of S--Trajectory back_probs reshape: {s.shape}")
         #prev_s = self.traj[:, :-1, :].reshape(-1, self.env.state_dim)
         prev_s = self.traj[:, :-1, :]
-        print(f"Shape of Previous S--Trajectory back_probs reshape: {prev_s.shape}")
+        #print(f"Shape of Previous S--Trajectory back_probs reshape: {prev_s.shape}")
         #traj_manipulator = SparseTensorManipulator(self.traj, self.env.state_dim)
         #s, prev_s = traj_manipulator.get_s_and_prev_s()
-        print(f"actions shape {self.actions.shape}")
+        #print(f"actions shape {self.actions.shape}")
         #actions = self.actions[:, :-1].flatten()
         actions = self.actions.t()
         #actions = actions[:, :-1]
         
         terminated = (actions == -1) | (actions == self.env.num_actions - 1)
-        print(f"Terminated in Back Probs shape: {terminated.shape}")
+        #print(f"Terminated in Back Probs shape: {terminated.shape}")
         zero_to_n = torch.arange(len(terminated))
         #actions_to_n = torch.arange(len(actions[1]))
-        print(f"Shape of S in back_probs: {s.shape}")
+        #print(f"Shape of S in back_probs: {s.shape}")
         #print(f"Zero to n shape: {zero_to_n.shape}, {zero_to_n}")
         #back_probs = self.backward_policy(s, self.env) * self.env.mask(prev_s)
         back_probs = self.backward_policy(s, self.env, terminated)
-        print(f"Env Prevs Mask Shape {self.env.mask(prev_s).shape}")
-        print(f"Back Probs Shape before where: {back_probs.shape}")        
+        #print(f"Env Prevs Mask Shape {self.env.mask(prev_s).shape}")
+        #print(f"Back Probs Shape before where: {back_probs.shape}")        
         #print(f"back probs subset shape before where: {back_probs[zero_to_n].shape}")
         #This is not what we want. It should be a tensor that has dim 0 of batch size and dim 1 of probs. 
         #back_probs = torch.where(terminated, 1, back_probs[zero_to_n, actions])
         #back_probs = torch.where(terminated, 1, back_probs)
-        print(f"back probs shape after where: {back_probs.shape}")
+        #print(f"back probs shape after where: {back_probs.shape}")
         self._back_probs = back_probs.reshape(self.num_samples, -1)
         
         return self._back_probs

@@ -32,22 +32,20 @@ class PreconditionerEnv(Env):
         self.alpha = 0.5
 
     def update(self, sparse_matrices: List[torch.sparse.FloatTensor], actions: List[List[int]]) -> List[torch.sparse.FloatTensor]:
-        print(f"Actions Within Update: {actions}")
+        #print(f"Actions Within Update: {actions}")
         batch_size = len(actions)
-        print(f"Batch size: {batch_size}")
+        #print(f"Batch size: {batch_size}")
         updated_states = []
 
-        for sparse in sparse_matrices:
-            print(f"Sparse Shape: {sparse.shape}")
 
         for i in range(batch_size):
-            print(f"Actions[i] shape: {len(actions[i])}")
+            #print(f"Actions[i] shape: {len(actions[i])}")
 
             current_indices = sparse_matrices[i]._indices().clone()
             current_values = sparse_matrices[i]._values().clone()
 
             for action in actions[i]:
-                print(f"Action {action}")
+                #print(f"Action {action}")
                 action = int(action)  # Convert the action to an integer
                 row, col = divmod(action, self.matrix_size)
                 idx_to_remove = (current_indices[0] == row) & (current_indices[1] == col)
@@ -71,7 +69,7 @@ class PreconditionerEnv(Env):
                 (1, self.matrix_size * self.matrix_size)
             ).coalesce()
 
-            print(f"Updated Matrix Shape {updated_matrix.shape}")
+            #print(f"Updated Matrix Shape {updated_matrix.shape}")
             updated_states.append(updated_matrix)
         
         return updated_states
@@ -80,7 +78,6 @@ class PreconditionerEnv(Env):
         # Use the current matrix as a preconditioner and calculate the reward
         # based on its performance (e.g., reduced iterations, improved stability)
         #Need to figure out a way to penalize a trajectory to avoid the model picking a blank matrix. For now, dividing by log length of trajectory, but will need to come up with something.
-        print(f"Start of reward")
         reward = self.evaluate_preconditioner(s, self.original_matrix, self.orig_residual, self.orig_flops, self.alpha)
 
         #reward = reward/torch.log(torch.tensor(traj_length, dtype=torch.float64))
@@ -108,7 +105,7 @@ class PreconditionerEnv(Env):
         product = torch.mm(updated_matrix, original_matrix)
         #print(f"Product {product}")
         residual = torch.norm(product - sparse_identity)
-        print(f"residual {residual}")
+        #print(f"residual {residual}")
 
         return residual
 
@@ -162,20 +159,20 @@ class PreconditionerEnv(Env):
         # Assuming 'matrix' is the sparse matrix
         
         residual = self.calculate_residual(updated_matrix, original_matrix)
-        print(f"Updated Matrix Flops Shape: {updated_matrix.shape}")
-        print(f"Updated Matrix Flops: {updated_matrix}")
+        #print(f"Updated Matrix Flops Shape: {updated_matrix.shape}")
+        #print(f"Updated Matrix Flops: {updated_matrix}")
         flops, non_zeros = self.matrix_flops(updated_matrix)
-        print(f"flops in evaluate_preconditioner {flops}")
+        #print(f"flops in evaluate_preconditioner {flops}")
         
         # Performance metric
         #inverse_residual = 1 / torch.log((1 + residual))
         #Modified so that residual is the denominator as it is expected to grow. We may need to change this.
         #residual_ratio = orig_residual / residual if residual != 0 else float('inf')
         residual_ratio = residual / orig_residual if orig_residual != 0 else float('inf')
-        print(f"residual_ratio {residual_ratio}")
+        #print(f"residual_ratio {residual_ratio}")
         computational_ratio = flops / orig_flops if orig_flops != 0 else float('inf')
-        print(f"computational_ratio: {computational_ratio}")
+        #print(f"computational_ratio: {computational_ratio}")
         
         performance_metric = self.alpha * (1 - residual_ratio) + (1 - self.alpha) * (1 - computational_ratio)
-        print(f"performance metric {performance_metric}")
+        #print(f"performance metric {performance_metric}")
         return performance_metric

@@ -18,16 +18,16 @@ class GFlowNet(nn.Module):
     
     def mask_and_normalize(self, s, probs):
         mask = self.env.mask(s)
-        print(f"Original mask shape: {mask.shape}")  # Check the mask shape
+        #print(f"Original mask shape: {mask.shape}")  # Check the mask shape
         
-        print(f"probs before normalization: {probs}")
+        #print(f"probs before normalization: {probs}")
 
         mask = mask.unsqueeze(1)
             
         #print(f"Expanded mask shape: {mask.shape}")  # Check the expanded mask shape
 
         probs = mask * probs
-        print(f"Probs with mask applied: {probs}")  # Check masked probabilities
+        #print(f"Probs with mask applied: {probs}")  # Check masked probabilities
 
         # Check if there is only one row
         if probs.size(0) == 1:
@@ -35,7 +35,7 @@ class GFlowNet(nn.Module):
         else:
             summed_probs = probs.sum(2)
 
-        print(f"Summed probs: {summed_probs}")  # Check sum of probabilities
+        #print(f"Summed probs: {summed_probs}")  # Check sum of probabilities
 
         # Ensure no division by zero
         summed_probs[summed_probs == 0] = 1
@@ -45,7 +45,7 @@ class GFlowNet(nn.Module):
         else:
             normalized_probs = probs / summed_probs.unsqueeze(1)
 
-        print(f"Normalized probs: {normalized_probs.shape}")  # Check normalized probabilities
+        #print(f"Normalized probs: {normalized_probs.shape}")  # Check normalized probabilities
 
         return normalized_probs
     
@@ -57,8 +57,8 @@ class GFlowNet(nn.Module):
             s: An NxD matrix representing N states
             actions: A list containing the actions for all trajectory samples to this point.
         """
-        print("Forward Probs Logging")
-        print(f"Len of S for iteration: {len(s)}")
+        #print("Forward Probs Logging")
+        #print(f"Len of S for iteration: {len(s)}")
 
         data_list = self.state_to_data(s)
         all_probs = []
@@ -66,7 +66,7 @@ class GFlowNet(nn.Module):
         
         for data in data_list:
             probs, alpha = self.forward_policy(data)
-            print(f"Probs from Policy Shape: {probs.shape}")
+            #print(f"Probs from Policy Shape: {probs.shape}")
             all_probs.append(probs)
             alphas.append(alpha)
         # Cat probabilities on dim 0 to restore N rows from the creation of the list.
@@ -77,7 +77,7 @@ class GFlowNet(nn.Module):
         mask = torch.ones_like(probs)
         if actions:
             actions = torch.stack(actions, dim=0).t()
-            print(f"actions shape for mask in forward_probs: {actions.shape}")
+            #print(f"actions shape for mask in forward_probs: {actions.shape}")
             # Ensure actions tensor is 2D for advanced indexing
             if actions.dim() == 1:
                 actions = actions.unsqueeze(1)
@@ -92,7 +92,7 @@ class GFlowNet(nn.Module):
 
         mask = init_mask_for_s * mask
         probs = probs * mask
-        print(f"mask for probs :{mask} ")
+        #print(f"mask for probs :{mask} ")
         alpha = torch.stack(alphas).mean()  # Assuming you want to average the alpha values
         
         return self.mask_and_normalize(s, probs), alpha
@@ -109,9 +109,9 @@ class GFlowNet(nn.Module):
             done_iterations += 1
 
             #Generate actions for all samples for logging
-            print(f"Type for _actions: {type(log._actions)}")
+            #print(f"Type for _actions: {type(log._actions)}")
             probs_all, _ = self.forward_probs(s, log._actions)
-            print(f"Probs from Policy: {probs_all}")
+            #print(f"Probs from Policy: {probs_all}")
             actions_all = Categorical(probs_all).sample()
 
             if actions_all.dim() == 0:
@@ -141,15 +141,8 @@ class GFlowNet(nn.Module):
 
             # Identify terminating actions and update the done tensor
             terminated = (actions_active == (probs_all.shape[-1] - 1)).view(-1)  # Ensure terminated is a 1D tensor
-            print(f"Terminated Shape: {terminated}")
+            #print(f"Terminated Shape: {terminated}")
             done[active_indices] = terminated
-            if done_iterations % 1000 == 0:
-                print(f"sample states s shape: {len(s)}")
-                print(f"sample states done shape: {done.shape}")
-                print(f"sample states actions shape: {actions_active.shape}")
-                print(f"Sampling Iterations {done_iterations}")
-                print(f"Updated done tensor: {done}")
-                print(f"Probs shape Sample State {probs_all.shape}")
 
         return (s, log) if return_log else s
     
@@ -205,8 +198,8 @@ class GFlowNet(nn.Module):
             data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr.float())
             data_list.append(data)
             
-            print(f"Length of data_list: {len(data_list)}")
-            print(f"Data object {i} - x dimensions: {data.x.shape}")
+            #print(f"Length of data_list: {len(data_list)}")
+            #print(f"Data object {i} - x dimensions: {data.x.shape}")
             #print(f"Data object {i} - x values: {data.x}")
             #print(f"Data object {i} - edge_index dimensions: {data.edge_index}")
             #print(f"Data object {i} - edge_attr dimensions: {data.edge_attr}")
