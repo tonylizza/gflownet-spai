@@ -32,14 +32,14 @@ class PreconditionerEnv(Env):
         self.alpha = 0.5
 
     def update(self, sparse_matrices: List[torch.sparse.FloatTensor], actions: List[List[int]]) -> List[torch.sparse.FloatTensor]:
-        #print(f"Actions Within Update: {actions}")
+        print(f"Actions Within Update: {actions}")
         batch_size = len(actions)
         #print(f"Batch size: {batch_size}")
         updated_states = []
 
 
         for i in range(batch_size):
-            #print(f"Actions[i] shape: {len(actions[i])}")
+            print(f"Actions[{i}] shape: {len(actions[i])}")
 
             current_indices = sparse_matrices[i]._indices().clone()
             current_values = sparse_matrices[i]._values().clone()
@@ -160,19 +160,22 @@ class PreconditionerEnv(Env):
         
         residual = self.calculate_residual(updated_matrix, original_matrix)
         #print(f"Updated Matrix Flops Shape: {updated_matrix.shape}")
-        #print(f"Updated Matrix Flops: {updated_matrix}")
+        print(f"Updated Matrix NNZ {updated_matrix._nnz()}")
         flops, non_zeros = self.matrix_flops(updated_matrix)
-        #print(f"flops in evaluate_preconditioner {flops}")
         
         # Performance metric
         #inverse_residual = 1 / torch.log((1 + residual))
         #Modified so that residual is the denominator as it is expected to grow. We may need to change this.
         #residual_ratio = orig_residual / residual if residual != 0 else float('inf')
         residual_ratio = residual / orig_residual if orig_residual != 0 else float('inf')
-        #print(f"residual_ratio {residual_ratio}")
+        print(f"Residual for Updated Matrix {residual}")
+        print(f"Original Residual: {orig_residual}")
+        print(f"residual_ratio {residual_ratio}")
         computational_ratio = flops / orig_flops if orig_flops != 0 else float('inf')
-        #print(f"computational_ratio: {computational_ratio}")
+        print(f"No. flops for Updated Matrix {flops}")
+        print(f"No. Flops Original Matrix {orig_flops}")
+        print(f"computational_ratio: {computational_ratio}")
         
         performance_metric = self.alpha * (1 - residual_ratio) + (1 - self.alpha) * (1 - computational_ratio)
-        #print(f"performance metric {performance_metric}")
+        print(f"performance metric {performance_metric}")
         return performance_metric

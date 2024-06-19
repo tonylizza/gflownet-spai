@@ -120,7 +120,9 @@ class GFlowNet(nn.Module):
             # Generate actions only for active samples
             active_indices = (~done).nonzero(as_tuple=True)[0]
             active_states = [s[i] for i in active_indices]
+            print(f"Active States {active_states}")
             actions_active = actions_all[active_indices]
+            print(f"Actions Active {actions_active}")
             #probs, _ = self.forward_probs(active_states)
 
             
@@ -134,7 +136,7 @@ class GFlowNet(nn.Module):
             for idx, update in zip(active_indices, updated_matrices):
                 #print(f"S[idx] before update from env: {s[idx].shape}")
                 s[idx] = update
-                #print(f"S[idx] after update from env: {s[idx].shape}")
+                print(f"S[idx] {idx} NNZ: {s[idx]._nnz()}")
 
             if return_log:
                 log.log(s, probs_all, actions_all, done)
@@ -144,6 +146,10 @@ class GFlowNet(nn.Module):
             #print(f"Terminated Shape: {terminated}")
             done[active_indices] = terminated
 
+        #complete_actions = log.actions
+        #complete_actions = complete_actions.t()
+        #reduced_matrices = self.env.update(s, complete_actions)
+        #print(f"Reduced Matrices Shape {len(reduced_matrices)}")
         return (s, log) if return_log else s
     
     def evaluate_trajectories(self, traj, actions):
