@@ -1,3 +1,4 @@
 .DS_Store
 __pycache__/
 training_log*
+detailed_training_log*

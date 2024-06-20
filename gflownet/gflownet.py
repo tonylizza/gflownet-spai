@@ -5,6 +5,7 @@ from torch.nn.parameter import Parameter
 from torch.distributions import Categorical
 from torch_geometric.data import Data
 from .log import Log
+from .utils import resize_sparse_tensor
 from typing import List
 
 class GFlowNet(nn.Module):
@@ -120,24 +121,23 @@ class GFlowNet(nn.Module):
             # Generate actions only for active samples
             active_indices = (~done).nonzero(as_tuple=True)[0]
             active_states = [s[i] for i in active_indices]
-            print(f"Active States {active_states}")
+            #print(f"Active States {active_states}")
             actions_active = actions_all[active_indices]
-            print(f"Actions Active {actions_active}")
+            #print(f"Actions Active {actions_active}")
             #probs, _ = self.forward_probs(active_states)
 
             
             for idx, action in zip(active_indices, actions_active):
                 cumulative_actions[idx].append(action.item())
-
-
+            '''
             # Update the environment for active samples only
             updated_matrices = self.env.update(active_states, actions_active.unsqueeze(1))
             
             for idx, update in zip(active_indices, updated_matrices):
                 #print(f"S[idx] before update from env: {s[idx].shape}")
                 s[idx] = update
-                print(f"S[idx] {idx} NNZ: {s[idx]._nnz()}")
-
+                #print(f"S[idx] {idx} NNZ: {s[idx]._nnz()}")
+            '''
             if return_log:
                 log.log(s, probs_all, actions_all, done)
 
@@ -146,10 +146,13 @@ class GFlowNet(nn.Module):
             #print(f"Terminated Shape: {terminated}")
             done[active_indices] = terminated
 
-        #complete_actions = log.actions
-        #complete_actions = complete_actions.t()
-        #reduced_matrices = self.env.update(s, complete_actions)
-        #print(f"Reduced Matrices Shape {len(reduced_matrices)}")
+        complete_actions = log.actions
+        complete_actions = complete_actions.t()
+        #print(f"Complete Actions {complete_actions.shape}")
+        reduced_matrices = self.env.update(s, complete_actions)
+        reward_matrices = [resize_sparse_tensor(reduced_matrices[i], (self.env.matrix_size, self.env.matrix_size)) for i in range(len(reduced_matrices))]
+        rewards = torch.tensor([self.env.reward(matrix, len(log._traj)) for matrix in reward_matrices], dtype=log.rewards.dtype)
+        log.rewards = rewards
         return (s, log) if return_log else s
     
     def evaluate_trajectories(self, traj, actions):

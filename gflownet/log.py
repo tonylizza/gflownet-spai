@@ -38,13 +38,13 @@ class Log:
             (True) and which are incomplete (False)
         """
         #print(f"s length: {len(s)}")
-        print(f"probs log shape: {probs.shape}")
+        #print(f"probs log shape: {probs.shape}")
         #print(f"actions shape: {actions.shape}")
         #print(f"done shape: {done.shape}")
         
         just_finished = actions == probs.shape[-1] - 1
         just_finished = just_finished.view(-1)  # Flatten to 1D
-        print(f"just_finished shape: {just_finished}")
+        #print(f"just_finished shape: {just_finished}")
         #print(f"Actions for mask: {actions}")
         active = ~done.clone()
     
@@ -59,7 +59,8 @@ class Log:
         #self._traj.append(states)
 
         # Store the updated state as a stacked tensor
-        states = torch.stack([s[i].to_dense() for i in range(len(s))])
+        resize_s = [resize_sparse_tensor_to_flat(i, (1, 324)) for i in s]
+        states = torch.stack([resize_s[i].to_dense() for i in range(len(resize_s))])
         self._traj.append(states)        
 
         #fwd_probs = torch.ones(actions.shape[0], probs.shape[2])
@@ -84,20 +85,17 @@ class Log:
         _actions[mask] = actions[mask]
         self._actions.append(_actions)
         reward_indices = torch.nonzero(just_finished.view(-1)).view(-1)
-        print(f"reward_indices: {reward_indices}")
-        
+        #print(f"reward_indices: {reward_indices}")
+        '''
         if reward_indices.numel() > 0:
             #for i in reward_indices:
             #    print(f"S[i] NNZ: {s[i]._nnz()}")
             reward_matrices = [resize_sparse_tensor(s[i], (self.env.matrix_size, self.env.matrix_size)) for i in reward_indices]
-            for matrix in reward_matrices:
-                print(f"Reward Matrix Shape NNZ {matrix._nnz()}")
             rewards = torch.tensor([self.env.reward(matrix, len(self._traj)) for matrix in reward_matrices], dtype=self.rewards.dtype)
             #print(f"reward values: {rewards}")
 
             self.rewards[reward_indices] = rewards
-        
-
+            '''
     @property
     def traj(self):
         if isinstance(self._traj, list):
