@@ -76,11 +76,11 @@ class PreconditionerEnv(Env):
         
         return updated_states 
 
-    def reward(self, s: Tensor, traj_length: int) -> float:
+    def reward(self, s: Tensor, traj_length: int, alpha: float) -> float:
         # Use the current matrix as a preconditioner and calculate the reward
         # based on its performance (e.g., reduced iterations, improved stability)
         #Need to figure out a way to penalize a trajectory to avoid the model picking a blank matrix. For now, dividing by log length of trajectory, but will need to come up with something.
-        reward = self.evaluate_preconditioner(s, self.original_matrix, self.orig_residual, self.orig_flops, self.alpha)
+        reward = self.evaluate_preconditioner(s, self.original_matrix, self.orig_residual, self.orig_flops, alpha)
 
         #reward = reward/torch.log(torch.tensor(traj_length, dtype=torch.float64))
         reward = reward/torch.tensor(traj_length, dtype=torch.float64)

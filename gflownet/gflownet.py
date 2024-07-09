@@ -94,7 +94,7 @@ class GFlowNet(nn.Module):
         mask = init_mask_for_s * mask
         probs = probs * mask
         #print(f"mask for probs :{mask} ")
-        alpha = torch.stack(alphas).mean()  # Assuming you want to average the alpha values
+        alpha = torch.stack(alphas).mean() 
         
         return self.mask_and_normalize(s, probs), alpha
     
@@ -151,7 +151,7 @@ class GFlowNet(nn.Module):
         #print(f"Complete Actions {complete_actions.shape}")
         reduced_matrices = self.env.update(s, complete_actions)
         reward_matrices = [resize_sparse_tensor(reduced_matrices[i], (self.env.matrix_size, self.env.matrix_size)) for i in range(len(reduced_matrices))]
-        rewards = torch.tensor([self.env.reward(matrix, len(log._traj)) for matrix in reward_matrices], dtype=log.rewards.dtype)
+        rewards = torch.tensor([self.env.reward(matrix, len(log._traj), self.forward_policy.alpha) for matrix in reward_matrices], dtype=log.rewards.dtype)
         log.rewards = rewards
         return (s, log) if return_log else s
     
