@@ -136,6 +136,7 @@ class Log:
         #s = self.traj[:, 1:, :].reshape(-1, self.env.state_dim)
         s = self.traj[:, 1:, :]
         #print(f"Shape of S--Trajectory back_probs reshape: {s.shape}")
+        #print(f"S {s}")
         #prev_s = self.traj[:, :-1, :].reshape(-1, self.env.state_dim)
         prev_s = self.traj[:, :-1, :]
         #print(f"Shape of Previous S--Trajectory back_probs reshape: {prev_s.shape}")
@@ -153,7 +154,9 @@ class Log:
         #print(f"Shape of S in back_probs: {s.shape}")
         #print(f"Zero to n shape: {zero_to_n.shape}, {zero_to_n}")
         #back_probs = self.backward_policy(s, self.env) * self.env.mask(prev_s)
-        back_probs = self.backward_policy(s, self.env, terminated)
+        #print(f"actions shape {actions.shape}")
+        #print(f"actions {actions}")
+        back_probs = self.backward_policy(actions)
         #print(f"Env Prevs Mask Shape {self.env.mask(prev_s).shape}")
         #print(f"Back Probs Shape before where: {back_probs.shape}")        
         #print(f"back probs subset shape before where: {back_probs[zero_to_n].shape}")

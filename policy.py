@@ -7,35 +7,22 @@ from torch_geometric.nn import GATv2Conv, global_mean_pool
 
 from typing import Tuple
 
-'''
-#Forward Policy uses a graph attention network
-class ForwardPolicy(nn.Module):
-    def __init__(self, node_features: int, hidden_dim: int, num_actions: int):
-        super().__init__()
-        self.gat1 = GATConv(node_features, hidden_dim)
-        self.gat2 = GATConv(hidden_dim, num_actions)
-        self.alpha = torch.nn.Parameter(torch.tensor(0.0)) #Starts with equal weighting for reward function mixing parameter
-    
-    def forward(self, data: Data) -> Tuple[Tensor, Tensor]:
-        x, edge_index = data.x, data.edge_index
-        print(f"Input x dimensions: {x.shape}")
-        print(f"Input edge_index dimensions: {edge_index.shape}")
-        x = torch.relu(self.gat1(x, edge_index))
-        print(f"After GATConv1 x dimensions: {x.shape}")
-        x = self.gat2(x, edge_index)
-        print(f"After GATConv2 x dimensions: {x.shape}")
-        return softmax(x, dim=1), torch.sigmoid(self.alpha)
-'''
-class ForwardPolicy(nn.Module):
-    def __init__(self, node_features: int, hidden_dim: int, num_actions: int):
-        super().__init__()
+class BasePolicy(nn.Module):
+    def __init__(self, node_features: int, hidden_dim: int):
+        super(BasePolicy, self).__init__()
+        self.node_features = node_features
         self.hid = hidden_dim
         self.in_head = 8
         self.out_head = 1
         self.gat1 = GATv2Conv(node_features, self.hid, edge_dim=1, heads=self.in_head)
-        self.gat2 = GATv2Conv(self.hid * self.in_head, num_actions, edge_dim=1, heads=self.out_head)
-        #self.fc = nn.Linear(num_actions - 1, num_actions)
-        #self.lin = torch.nn.Linear(hidden_dim, num_actions)
+
+
+
+class ForwardPolicy(BasePolicy):
+    def __init__(self, node_features: int, hidden_dim: int, num_actions: int):
+        super().__init__(node_features, hidden_dim)
+        self.num_actions = num_actions
+        self.gat2 = GATv2Conv(self.hid * self.in_head, self.num_actions, edge_dim=1, heads=self.out_head)
         self.alpha = torch.nn.Parameter(torch.tensor(0.0))  # Starts with equal weighting for reward function mixing parameter
 
         # Initialize parameters
@@ -65,17 +52,11 @@ class ForwardPolicy(nn.Module):
         
         x = torch.relu(self.gat2(x, edge_index, edge_attr))
         # Apply global mean pooling to aggregate node features
-        x = global_mean_pool(x, batch=torch.zeros(x.size(0), dtype=torch.long, device=x.device))
-        
-        #x = self.lin(x)
-        #Map GAT2 back to fully connected layer to get to [1,325]
-        #x = self.fc(x)
-        #print(f"After GATConv2 x dimensions: {x.shape}")
-        
+        x = global_mean_pool(x, batch=torch.zeros(x.size(0), dtype=torch.long, device=x.device)) 
         return torch.softmax(x, dim=1), torch.sigmoid(self.alpha)
 
 
-            
+'''  
 class BackwardPolicy:
     def __init__(self, matrix_size, num_actions):
         self.matrix_size = matrix_size
@@ -140,3 +121,34 @@ class BackwardPolicy:
         #print(f"final probs: {probs}")
         
         return probs
+'''
+
+class BackwardPolicy(nn.Module):
+    def __init__(self, input_dim: int, hidden_dim: int, num_actions: int):
+        super(BackwardPolicy, self).__init__()
+        self.hidden_dim = hidden_dim
+        self.lstm = nn.LSTM(input_dim, hidden_dim, batch_first=True)
+        self.fc = nn.Linear(hidden_dim, num_actions)
+
+    def forward(self, trajectories: Tensor) -> Tensor:
+        # Create a mask based on the padding value (-1)
+        trajectories = trajectories.float()
+        trajectories = trajectories.unsqueeze(-1)
+        mask = (trajectories != -1)
+        #print(f"mask length {mask.shape}")
+        lengths = mask.sum(dim=1)
+        lengths = lengths.squeeze()
+        
+        # Pack the padded sequences
+        packed_input = nn.utils.rnn.pack_padded_sequence(trajectories, lengths, batch_first=True, enforce_sorted=False)
+        packed_output, _ = self.lstm(packed_input)
+        lstm_out, _ = nn.utils.rnn.pad_packed_sequence(packed_output, batch_first=True)
+        
+        # Use the mask to gather the output from the last valid time step
+        idx = (lengths - 1).view(-1, 1).expand(len(lengths), lstm_out.size(2))
+        time_dimension = 1
+        idx = idx.unsqueeze(time_dimension)
+        lstm_out = lstm_out.gather(time_dimension, idx).squeeze(time_dimension)
+        
+        output = self.fc(lstm_out)
+        return torch.softmax(output, dim=1)
