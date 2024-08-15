@@ -9,8 +9,8 @@ from .utils import resize_sparse_tensor, resize_sparse_tensor_to_flat
 class Log:
     def __init__(self, s0, backward_policy, total_flow, env):
         #self._traj = [s0]
-        resized_s0 = [resize_sparse_tensor_to_flat(i, (1, 324)) for i in s0]
-        self._traj = [torch.stack(resized_s0)]
+        #resized_s0 = [resize_sparse_tensor_to_flat(i, (1, 324)) for i in s0]
+        #self._traj = [torch.stack(resized_s0)]
         self._fwd_probs = []
         self._back_probs = None
         self._actions = []
@@ -59,9 +59,9 @@ class Log:
         #self._traj.append(states)
 
         # Store the updated state as a stacked tensor
-        resize_s = [resize_sparse_tensor_to_flat(i, (1, 324)) for i in s]
-        states = torch.stack([resize_s[i].to_dense() for i in range(len(resize_s))])
-        self._traj.append(states)        
+        #resize_s = [resize_sparse_tensor_to_flat(i, (1, 324)) for i in s]
+        #states = torch.stack([resize_s[i].to_dense() for i in range(len(resize_s))])
+        #self._traj.append(states)        
 
         #fwd_probs = torch.ones(actions.shape[0], probs.shape[2])
         fwd_probs = torch.ones(actions.shape[0])
@@ -86,16 +86,7 @@ class Log:
         self._actions.append(_actions)
         reward_indices = torch.nonzero(just_finished.view(-1)).view(-1)
         #print(f"reward_indices: {reward_indices}")
-        '''
-        if reward_indices.numel() > 0:
-            #for i in reward_indices:
-            #    print(f"S[i] NNZ: {s[i]._nnz()}")
-            reward_matrices = [resize_sparse_tensor(s[i], (self.env.matrix_size, self.env.matrix_size)) for i in reward_indices]
-            rewards = torch.tensor([self.env.reward(matrix, len(self._traj)) for matrix in reward_matrices], dtype=self.rewards.dtype)
-            #print(f"reward values: {rewards}")
-
-            self.rewards[reward_indices] = rewards
-            '''
+    '''
     @property
     def traj(self):
         if isinstance(self._traj, list):
@@ -105,8 +96,8 @@ class Log:
             #self._traj = torch.cat(self._traj, dim=1)[:, :-1, :]
             self._traj = torch.cat(self._traj, dim=1)
             #print(f"Shape after concatenation: {self._traj.shape}")
-        return self._traj    
-
+        return self._traj
+        '''
     @property
     def fwd_probs(self):
         if isinstance(self._fwd_probs, list):
@@ -134,11 +125,11 @@ class Log:
         
         #print(f"Shape of Trajectory at Start of back_probs method {self.traj.shape}")
         #s = self.traj[:, 1:, :].reshape(-1, self.env.state_dim)
-        s = self.traj[:, 1:, :]
+        #s = self.traj[:, 1:, :]
         #print(f"Shape of S--Trajectory back_probs reshape: {s.shape}")
         #print(f"S {s}")
         #prev_s = self.traj[:, :-1, :].reshape(-1, self.env.state_dim)
-        prev_s = self.traj[:, :-1, :]
+        #prev_s = self.traj[:, :-1, :]
         #print(f"Shape of Previous S--Trajectory back_probs reshape: {prev_s.shape}")
         #traj_manipulator = SparseTensorManipulator(self.traj, self.env.state_dim)
         #s, prev_s = traj_manipulator.get_s_and_prev_s()
@@ -147,9 +138,9 @@ class Log:
         actions = self.actions.t()
         #actions = actions[:, :-1]
         
-        terminated = (actions == -1) | (actions == self.env.num_actions - 1)
+        #terminated = (actions == -1) | (actions == self.env.num_actions - 1)
         #print(f"Terminated in Back Probs shape: {terminated.shape}")
-        zero_to_n = torch.arange(len(terminated))
+        #zero_to_n = torch.arange(len(terminated))
         #actions_to_n = torch.arange(len(actions[1]))
         #print(f"Shape of S in back_probs: {s.shape}")
         #print(f"Zero to n shape: {zero_to_n.shape}, {zero_to_n}")

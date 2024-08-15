@@ -7,13 +7,13 @@ from torch_geometric.data import Data
 from gflownet.env import Env
 
 class PreconditionerEnv(Env):
-    def __init__(self, matrix_size: int, initial_matrix: Tensor):
+    def __init__(self, matrix_size: int, initial_matrix: Tensor, original_matrix: Tensor):
         self.matrix_size = matrix_size
         self.state_dim = matrix_size**2 # Modify for current use case
         self.num_actions = (matrix_size**2) + 1  # Number of actions is the number of entries in the matrix plus one for terminal action.
         self.matrix = initial_matrix.clone()
-        self.original_matrix = initial_matrix.clone()
-        self.init_mask = self.create_mask_from_sparse_matrix(self.original_matrix)
+        self.original_matrix = original_matrix.clone()
+        self.init_mask = self.create_mask_from_sparse_matrix(self.matrix)
 
 
         # Extract edge_index and edge_attr directly from the sparse matrix
