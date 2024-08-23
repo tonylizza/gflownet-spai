@@ -31,8 +31,7 @@ class Log:
             probs: An NxA matrix containing the forward probabilities output by the
             GFlowNet for the given states
             
-            actions: A Nx1 vector containing the actions taken by the GFlowNet
-            in the given states
+            actions:
             
             done: An Nx1 Boolean vector indicating which samples are complete
             (True) and which are incomplete (False)

@@ -9,8 +9,9 @@ from gflownet.env import Env
 class PreconditionerEnv(Env):
     def __init__(self, matrix_size: int, initial_matrix: Tensor, original_matrix: Tensor):
         self.matrix_size = matrix_size
-        self.state_dim = matrix_size**2 # Modify for current use case
-        self.num_actions = (matrix_size**2) + 1  # Number of actions is the number of entries in the matrix plus one for terminal action.
+        self.init_nnz = initial_matrix.coalesce().indices().size(1)
+        self.state_dim = self.init_nnz # Modify for current use case
+        self.num_actions = (self.init_nnz) + 1  # Number of actions is the number of entries in the matrix plus one for terminal action.
         self.matrix = initial_matrix.clone()
         self.original_matrix = original_matrix.clone()
         self.init_mask = self.create_mask_from_sparse_matrix(self.matrix)
@@ -68,7 +69,8 @@ class PreconditionerEnv(Env):
             updated_matrix = torch.sparse_coo_tensor(
                 torch.stack([torch.zeros_like(flattened_indices), flattened_indices]),  # Adding a 0 dimension for the batch size
                 current_values,
-                (1, self.matrix_size * self.matrix_size)
+                (1, self.matrix_size * self.matrix_size),
+                dtype=torch.float32
             ).coalesce()
 
             #print(f"Updated Matrix Shape {updated_matrix.shape}")
@@ -81,9 +83,11 @@ class PreconditionerEnv(Env):
         # based on its performance (e.g., reduced iterations, improved stability)
         #Need to figure out a way to penalize a trajectory to avoid the model picking a blank matrix. For now, dividing by log length of trajectory, but will need to come up with something.
         reward = self.evaluate_preconditioner(s, self.original_matrix, self.orig_residual, self.orig_flops, alpha)
+        #print(f"Reward Method before Traj Length: {reward}")
 
         #reward = reward/torch.log(torch.tensor(traj_length, dtype=torch.float64))
         reward = reward/torch.tensor(traj_length, dtype=torch.float64)
+        #print(f"Reward Method after Traj Length: {reward}")
         return reward
     
     def matrix_flops(self, matrix: Tensor) -> Tuple[int, int]:
@@ -104,6 +108,8 @@ class PreconditionerEnv(Env):
         i = torch.stack([i, i])
         v = torch.ones(self.matrix_size, dtype=torch.float64)
         sparse_identity = torch.sparse_coo_tensor(i, v, (self.matrix_size, self.matrix_size))
+        #print(f"updated_matrix_dtype: {updated_matrix.dtype}")
+        #print(f"original_matrix_dtype: {original_matrix.dtype}")
         product = torch.mm(updated_matrix, original_matrix)
         #print(f"Product {product}")
         residual = torch.norm(product - sparse_identity)

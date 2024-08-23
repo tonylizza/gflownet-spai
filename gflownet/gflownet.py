@@ -46,6 +46,7 @@ class GFlowNet(nn.Module):
         else:
             normalized_probs = probs / summed_probs.unsqueeze(1)
 
+        #print(f"Normalized probs shape: {normalized_probs.shape}")  # Check normalized probabilities
         #print(f"Normalized probs: {normalized_probs.shape}")  # Check normalized probabilities
 
         return normalized_probs
@@ -66,16 +67,20 @@ class GFlowNet(nn.Module):
         alphas = []
         
         for data in data_list:
+            #print(f"Data for Forward Policy {data}")
             probs, alpha = self.forward_policy(data)
-            #print(f"Probs from Policy Shape: {probs.shape}")
+            #print(f"Probs from Policy Shape {probs.shape}")
+            #print(f"Probs from Policy: {probs}")
             all_probs.append(probs)
             alphas.append(alpha)
         # Cat probabilities on dim 0 to restore N rows from the creation of the list.
         #probs = torch.cat(all_probs, dim=0)
 
-        init_mask_for_s = torch.stack([self.env.init_mask for _ in range(len(s))])
+        #init_mask_for_s = torch.stack([self.env.init_mask for _ in range(len(s))])
+        #print(f"init_mask_for_s: {init_mask_for_s.shape}")
         probs = torch.stack(all_probs)
         mask = torch.ones_like(probs)
+        #print(f"mask {mask.shape}")
         if actions:
             actions = torch.stack(actions, dim=0).t()
             #print(f"actions shape for mask in forward_probs: {actions.shape}")
@@ -91,7 +96,7 @@ class GFlowNet(nn.Module):
         else:
             pass
 
-        mask = init_mask_for_s * mask
+        #mask = init_mask_for_s * mask
         probs = probs * mask
         #print(f"mask for probs :{mask} ")
         alpha = torch.stack(alphas).mean() 
@@ -105,6 +110,7 @@ class GFlowNet(nn.Module):
         cumulative_actions = [[] for _ in range(len(s))]
         log = Log(s0, self.backward_policy, self.total_flow, self.env) if return_log else None
         done_iterations = 0
+        #print(f"Begin sampling")
 
         while not done.all():
             done_iterations += 1
@@ -198,12 +204,13 @@ class GFlowNet(nn.Module):
                 raise ValueError(f"Tensor at index {i} is not a sparse tensor.")
             
             current_matrix = s[i]
-            #print(f"Current Matrix State to Data: {current_matrix}")
+
             edge_index = current_matrix._indices()
             edge_attr = current_matrix._values()
-            num_nodes = current_matrix.size(0)
+
+            #print(f"Current Matrix State to Data: {current_matrix}")
             #x = torch.ones((num_nodes, 1))  # Example node features, you may adjust this as needed
-            x = torch.ones((324, 1))
+            x = torch.ones((self.env.matrix_size*2, 1))
             data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr.float())
             data_list.append(data)
             
