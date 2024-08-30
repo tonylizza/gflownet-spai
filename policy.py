@@ -32,18 +32,14 @@ class ForwardPolicy(BasePolicy):
         #log_memory_usage("Before Defining Data")
         log_memory_usage("Before Setting Up Data")
         x, edge_index, edge_attr= data.x, data.edge_index, data.edge_attr
-        #print(f"Before GATConv1 x : {x}")
+        print(f"Before GATConv1 x : {x.shape}")
         #print(f"Before GATConv1 edge_index : {edge_index}")
         #print(f"Before GATConv1 edge_attr : {edge_attr}")
         log_memory_usage("Before Defining num_actions")
         num_actions = edge_attr.size(0) + 1
         #print(f"num_actions {num_actions}")
         #log_memory_usage("Before Defining GAT2")
-        if self.gat2 is None or self.gat2.out_channels != num_actions:
-            if self.gat2 is not None:
-                del self.gat2
-                gc.collect()
-            self.gat2 = GATv2Conv(self.hid * self.in_head, num_actions, edge_dim=1, heads=self.out_head).to(x.device)
+        self.gat2 = GATv2Conv(self.hid * self.in_head, num_actions, edge_dim=1, heads=self.out_head).to(x.device)
         
         #print(f"GAT Layer Weights: {self.gat1.lin_l.weight}")
         log_memory_usage("Before 1st Relu")
