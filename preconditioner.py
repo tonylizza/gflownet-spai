@@ -14,7 +14,7 @@ class PreconditionerEnv(Env):
         self.num_actions = (self.init_nnz) + 1  # Number of actions is the number of entries in the matrix plus one for terminal action.
         self.matrix = initial_matrix.clone()
         self.original_matrix = original_matrix.clone()
-        self.init_mask = self.create_mask_from_sparse_matrix(self.matrix)
+        #self.init_mask = self.create_mask_from_sparse_matrix(self.matrix)
 
 
         # Extract edge_index and edge_attr directly from the sparse matrix
@@ -42,8 +42,8 @@ class PreconditionerEnv(Env):
         for i in range(batch_size):
             #print(f"Actions for 2[{i}] shape: {actions[i].shape}")
 
-            current_indices = sparse_matrices[i]._indices().clone()
-            current_values = sparse_matrices[i]._values().clone()
+            current_indices = sparse_matrices[i]._indices()
+            current_values = sparse_matrices[i]._values()
 
             for action in actions[i]:
                 if action == -1:
@@ -55,9 +55,9 @@ class PreconditionerEnv(Env):
                 if idx_to_remove.any():
                     removed_value = current_values[idx_to_remove].item()
                     self.removed_entries.append((row, col, removed_value))
-
-                    current_indices = current_indices[:, ~idx_to_remove]
-                    current_values = current_values[~idx_to_remove]
+                    mask = ~idx_to_remove
+                    current_indices = current_indices[:, mask]
+                    current_values = current_values[mask]
 
             #current_matrix = torch.sparse_coo_tensor(current_indices, current_values, sparse_matrices[i].size()).coalesce()
             #updated_matrix = torch.sparse_coo_tensor(current_matrix._indices(), current_matrix._values(), (1, self.matrix_size * self.matrix_size)).coalesce()
@@ -148,9 +148,10 @@ class PreconditionerEnv(Env):
         # Set the corresponding entries in the mask to one
         mask[indices[0], indices[1]] = 1
 
-        flat_mask = mask.view(-1)
+        #flat_mask = mask.view(-1)
 
-        resized_mask = flat_mask.view((1, size[0] * size[1]))
+        #resized_mask = flat_mask.view((1, size[0] * size[1]))
+        resized_mask = mask.view(1, size[0] * size[1])
 
         additional_entry = torch.tensor([[1]], dtype=torch.float32)
 

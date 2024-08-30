@@ -2,6 +2,8 @@ import torch
 from torch import Tensor
 from torch_geometric.data import Data
 import scipy.io
+import psutil
+import tracemalloc
 
 class SparseTensorManipulator:
     def __init__(self, sparse_tensor, state_dim):
@@ -273,3 +275,18 @@ def trajectory_balance_loss(total_flow, rewards, fwd_probs, back_probs):
     loss = (log_lhs - log_rhs)**2
     
     return loss.mean()
+
+def log_memory_usage(stage: str):
+    process = psutil.Process()
+    mem_info = process.memory_info()
+    print(f"[{stage}] CPU Memory Usage: {mem_info.rss / (1024 ** 2):.2f} MB; VMS: {mem_info.vms / (1024 ** 2):.2f} MB")
+    if torch.cuda.is_available():
+        print(f"[{stage}] GPU Memory Usage: {torch.cuda.memory_allocated() / (1024 ** 2):.2f} MB")
+
+def malloc_usage(description):
+    snapshot = tracemalloc.take_snapshot()
+    top_stats = snapshot.statistics('lineno')
+    
+    print(f"\nMemory usage at {description}:")
+    for stat in top_stats:  # Print top 10 lines
+        print(stat)

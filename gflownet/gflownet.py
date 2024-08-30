@@ -5,8 +5,9 @@ from torch.nn.parameter import Parameter
 from torch.distributions import Categorical
 from torch_geometric.data import Data
 from .log import Log
-from .utils import resize_sparse_tensor
+from .utils import resize_sparse_tensor, log_memory_usage, malloc_usage
 from typing import List
+import gc
 
 class GFlowNet(nn.Module):
     def __init__(self, forward_policy, backward_policy, env):
@@ -18,40 +19,32 @@ class GFlowNet(nn.Module):
         self.env = env
     
     def mask_and_normalize(self, s, probs):
-        mask = self.env.mask(s)
+        #log_memory_usage("mask_and_normalize: Before getting self.env.mask")
+        #mask = self.env.mask(s)
         #print(f"Original mask shape: {mask.shape}")  # Check the mask shape
         
         #print(f"probs before normalization: {probs}")
 
-        mask = mask.unsqueeze(1)
+        #mask = mask.unsqueeze(1)
             
         #print(f"Expanded mask shape: {mask.shape}")  # Check the expanded mask shape
 
-        probs = mask * probs
-        #print(f"Probs with mask applied: {probs}")  # Check masked probabilities
-
+        #probs.mul_(mask)
+        #log_memory_usage("mask_and_normalize: After prob.mul_(mask)")
+        #print(f"Probs with mask applied: {probs.shape}")  # Check masked probabilities
+        #del mask
         # Check if there is only one row
-        if probs.size(0) == 1:
-            summed_probs = probs
-        else:
+        if probs.size(0) > 1:
             summed_probs = probs.sum(2)
-
-        #print(f"Summed probs: {summed_probs}")  # Check sum of probabilities
-
-        # Ensure no division by zero
-        summed_probs[summed_probs == 0] = 1
-
-        if probs.size(0) == 1:
-            normalized_probs = probs
-        else:
-            normalized_probs = probs / summed_probs.unsqueeze(1)
-
-        #print(f"Normalized probs shape: {normalized_probs.shape}")  # Check normalized probabilities
-        #print(f"Normalized probs: {normalized_probs.shape}")  # Check normalized probabilities
-
-        return normalized_probs
+            summed_probs[summed_probs == 0] = 1  # Avoid division by zero
+            probs.div_(summed_probs.unsqueeze(1))  # In-place division for normalization
+        # If only one row, probs remain unchanged.
+        
+        del summed_probs
+        gc.collect()
+        return probs
     
-    def forward_probs(self, s, actions):
+    def forward_probs(self, s, data_list, actions):
         """
         Returns a vector of probabilities over actions in a given state.
         
@@ -61,26 +54,33 @@ class GFlowNet(nn.Module):
         """
         #print("Forward Probs Logging")
         #print(f"Len of S for iteration: {len(s)}")
-
-        data_list = self.state_to_data(s)
+        #log_memory_usage("Before Converting States to Data")
+        #log_memory_usage("After Converting States to Data")
         all_probs = []
         alphas = []
         
         for data in data_list:
             #print(f"Data for Forward Policy {data}")
+            #log_memory_usage("Before Forward Policy Sampling")
             probs, alpha = self.forward_policy(data)
+            #log_memory_usage("After Forward Policy")
             #print(f"Probs from Policy Shape {probs.shape}")
             #print(f"Probs from Policy: {probs}")
             all_probs.append(probs)
             alphas.append(alpha)
+            del data, probs, alpha
+            gc.collect()
         # Cat probabilities on dim 0 to restore N rows from the creation of the list.
         #probs = torch.cat(all_probs, dim=0)
 
         #init_mask_for_s = torch.stack([self.env.init_mask for _ in range(len(s))])
         #print(f"init_mask_for_s: {init_mask_for_s.shape}")
-        probs = torch.stack(all_probs)
-        mask = torch.ones_like(probs)
+        #probs = torch.stack(all_probs)
+        all_probs = torch.stack(all_probs, dim=0)
+        alpha = torch.stack(alphas, dim=0).mean()
+        mask = torch.ones_like(all_probs)
         #print(f"mask {mask.shape}")
+        #log_memory_usage("forward_probs: Before removing actions")
         if actions:
             actions = torch.stack(actions, dim=0).t()
             #print(f"actions shape for mask in forward_probs: {actions.shape}")
@@ -97,44 +97,60 @@ class GFlowNet(nn.Module):
             pass
 
         #mask = init_mask_for_s * mask
-        probs = probs * mask
+        all_probs.mul_(mask)
+        del mask, data_list
+        gc.collect()
+        #log_memory_usage("forward_probs: Before passing to mask_and_normalize")
         #print(f"mask for probs :{mask} ")
-        alpha = torch.stack(alphas).mean() 
-        
-        return self.mask_and_normalize(s, probs), alpha
+
+        if all_probs.size(0) > 1:
+            summed_probs = all_probs.sum(2)
+            summed_probs[summed_probs == 0] = 1  # Avoid division by zero
+            all_probs.div_(summed_probs.unsqueeze(1))  # In-place division for normalization
+        # If only one row, probs remain unchanged.
+        del summed_probs
+        #return self.mask_and_normalize(s, all_probs), alpha
+        return all_probs, alpha
     
     def sample_states(self, s0, return_log=False):
-        s = [matrix.clone() for matrix in s0]
+        #s = [matrix.clone() for matrix in s0]
 
-        done = torch.BoolTensor([False] * len(s))
-        cumulative_actions = [[] for _ in range(len(s))]
+        done = torch.BoolTensor([False] * len(s0))
         log = Log(s0, self.backward_policy, self.total_flow, self.env) if return_log else None
         done_iterations = 0
         #print(f"Begin sampling")
 
+        data_list = self.state_to_data(s0)
+
         while not done.all():
             done_iterations += 1
 
+            if done_iterations % 100 == 0:
+                log_memory_usage("Sample Iteration " + str(done_iterations))
+            else:
+                pass
             #Generate actions for all samples for logging
             #print(f"Type for _actions: {type(log._actions)}")
-            probs_all, _ = self.forward_probs(s, log._actions)
-            #print(f"Probs from Policy: {probs_all}")
+            log_memory_usage("Before Forward Probs")
+            probs_all, _ = self.forward_probs(s0, data_list, log._actions)
+            #print(f"probs_all {probs_all.shape}")
+            log_memory_usage("After Forward Probs Created")
             actions_all = Categorical(probs_all).sample()
+            #print(f"actions_all {actions_all.shape}")
+            #log_memory_usage("After Categorical Sampling")
 
             if actions_all.dim() == 0:
                 actions_all = actions_all.unsqueeze(0)
 
             # Generate actions only for active samples
             active_indices = (~done).nonzero(as_tuple=True)[0]
-            active_states = [s[i] for i in active_indices]
+            #active_states = [s[i] for i in active_indices]
             #print(f"Active States {active_states}")
             actions_active = actions_all[active_indices]
             #print(f"Actions Active {actions_active}")
             #probs, _ = self.forward_probs(active_states)
 
             
-            for idx, action in zip(active_indices, actions_active):
-                cumulative_actions[idx].append(action.item())
             '''
             # Update the environment for active samples only
             updated_matrices = self.env.update(active_states, actions_active.unsqueeze(1))
@@ -145,21 +161,23 @@ class GFlowNet(nn.Module):
                 #print(f"S[idx] {idx} NNZ: {s[idx]._nnz()}")
             '''
             if return_log:
-                log.log(s, probs_all, actions_all, done)
+                log.log(s0, probs_all, actions_all, done)
 
             # Identify terminating actions and update the done tensor
             terminated = (actions_active == (probs_all.shape[-1] - 1)).view(-1)  # Ensure terminated is a 1D tensor
             #print(f"Terminated Shape: {terminated}")
             done[active_indices] = terminated
 
-        complete_actions = log.actions
-        complete_actions = complete_actions.t()
+        complete_actions = log.actions.t()
         #print(f"Complete Actions {complete_actions.shape}")
-        reduced_matrices = self.env.update(s, complete_actions)
+        reduced_matrices = self.env.update(s0, complete_actions)
         reward_matrices = [resize_sparse_tensor(reduced_matrices[i], (self.env.matrix_size, self.env.matrix_size)) for i in range(len(reduced_matrices))]
         rewards = torch.tensor([self.env.reward(matrix, len(log._actions), self.forward_policy.alpha) for matrix in reward_matrices], dtype=log.rewards.dtype)
         log.rewards = rewards
-        return (s, log) if return_log else s
+        del reduced_matrices
+        del reward_matrices
+        gc.collect()
+        return log if return_log else None
     
     def evaluate_trajectories(self, traj, actions):
         num_samples = len(traj)
@@ -203,10 +221,9 @@ class GFlowNet(nn.Module):
             if not current_matrix.is_sparse:
                 raise ValueError(f"Tensor at index {i} is not a sparse tensor.")
             
-            current_matrix = s[i]
 
-            edge_index = current_matrix._indices()
-            edge_attr = current_matrix._values()
+            edge_index = s[i]._indices()
+            edge_attr = s[i]._values()
 
             #print(f"Current Matrix State to Data: {current_matrix}")
             #x = torch.ones((num_nodes, 1))  # Example node features, you may adjust this as needed
