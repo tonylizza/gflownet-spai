@@ -7,6 +7,7 @@ from torch_geometric.nn import GATv2Conv, global_mean_pool
 from gflownet.utils import log_memory_usage
 import torch.nn.functional as F
 import gc
+from typing import List
 
 from typing import Tuple
 
@@ -22,40 +23,50 @@ class BasePolicy(nn.Module):
 
 
 class ForwardPolicy(BasePolicy):
-    def __init__(self, node_features: int, hidden_dim: int):
+    def __init__(self, node_features: int, hidden_dim: int, max_num_actions: int):
         super().__init__(node_features, hidden_dim)
         #log_memory_usage("Before Defining GAT2")
-        self.gat2 = None #Define dynamically at runtime
+        self.gat2 = GATv2Conv(self.hid * self.in_head, self.hid, edge_dim=1, heads=self.out_head)
+        self.fc = nn.Linear(self.hid, max_num_actions)
         self.alpha = torch.nn.Parameter(torch.tensor(0.0))  # Starts with equal weighting for reward function mixing parameter
     
-    def forward(self, data: Data) -> Tuple[Tensor, Tensor]:
+    def forward(self, data: Data, actions: List[int]) -> Tuple[Tensor, Tensor]:
         #log_memory_usage("Before Defining Data")
-        log_memory_usage("Before Setting Up Data")
+        #log_memory_usage("Before Setting Up Data")
         x, edge_index, edge_attr= data.x, data.edge_index, data.edge_attr
-        print(f"Before GATConv1 x : {x.shape}")
+        #print(f"Before GATConv1 x : {x.shape}")
         #print(f"Before GATConv1 edge_index : {edge_index}")
         #print(f"Before GATConv1 edge_attr : {edge_attr}")
-        log_memory_usage("Before Defining num_actions")
+        #log_memory_usage("Before Defining num_actions")
         num_actions = edge_attr.size(0) + 1
         #print(f"num_actions {num_actions}")
         #log_memory_usage("Before Defining GAT2")
-        self.gat2 = GATv2Conv(self.hid * self.in_head, num_actions, edge_dim=1, heads=self.out_head).to(x.device)
+        #self.gat2 = GATv2Conv(self.hid * self.in_head, num_actions, edge_dim=1, heads=self.out_head).to(x.device)
         
         #print(f"GAT Layer Weights: {self.gat1.lin_l.weight}")
-        log_memory_usage("Before 1st Relu")
+        #log_memory_usage("Before 1st Relu")
         x = torch.relu(self.gat1(x, edge_index, edge_attr))
-        print(f"After GATConv1 x dimensions: {x.shape}")
+        #print(f"After GATConv1 x dimensions: {x.shape}")
         #print(f"GAT1 value before Relu: {self.gat1(x, edge_index, edge_attr)}")
         #print(f"After ReLu GATConv1 x dimensions: {x.dtype}")
-        log_memory_usage("Before 2nd Relu")
+        #log_memory_usage("Before 2nd Relu")
         
         x = torch.relu(self.gat2(x, edge_index, edge_attr))
-        print(f"After GATConv2 x dimensions: {x.shape}")
+        #print(f"After GATConv2 x dimensions: {x.shape}")
         # Apply global mean pooling to aggregate node features
-        log_memory_usage("Before Global Mean Pooling")
+        #log_memory_usage("Before Global Mean Pooling")
         x = global_mean_pool(x, batch=torch.zeros(x.size(0), dtype=torch.long, device=x.device))
+
+        num_actions = edge_attr.size(0) + 1
         #print(f"Global Mean Pooling x dimensions: {x}")
-        log_memory_usage("Before Softmax")
+        x = self.fc(x)
+        x = x[:, :num_actions]
+        if actions.numel() > 0:
+            mask = torch.ones_like(x, dtype=torch.bool)
+            mask[:, actions] = 0
+
+            x = x.masked_fill(~mask, float('-inf'))
+        #log_memory_usage("Before Softmax")
         gc.collect() 
         return torch.softmax(x, dim=1), torch.sigmoid(self.alpha)
 

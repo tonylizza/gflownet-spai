@@ -44,7 +44,7 @@ class GFlowNet(nn.Module):
         gc.collect()
         return probs
     
-    def forward_probs(self, s, data_list, actions):
+    def forward_probs(self, s, data_list, actions=None):
         """
         Returns a vector of probabilities over actions in a given state.
         
@@ -59,10 +59,19 @@ class GFlowNet(nn.Module):
         all_probs = []
         alphas = []
         
-        for data in data_list:
+        # Handle empty actions
+        if actions is None or len(actions) == 0:
+            actions = torch.empty(0)
+        else:
+            # Transpose and convert to tensor
+            actions = torch.tensor(list(zip(*actions)), dtype=torch.long)
+
+        #print(f"actions type {type(actions)}")
+        for i, data in enumerate(data_list):
             #print(f"Data for Forward Policy {data}")
             #log_memory_usage("Before Forward Policy Sampling")
-            probs, alpha = self.forward_policy(data)
+            actions_data = actions[i, :] if actions.numel() > 0 else torch.empty(0, dtype=torch.long)
+            probs, alpha = self.forward_policy(data, actions_data)
             #log_memory_usage("After Forward Policy")
             #print(f"Probs from Policy Shape {probs.shape}")
             #print(f"Probs from Policy: {probs}")
@@ -81,6 +90,7 @@ class GFlowNet(nn.Module):
         mask = torch.ones_like(all_probs)
         #print(f"mask {mask.shape}")
         #log_memory_usage("forward_probs: Before removing actions")
+        '''
         if actions:
             actions = torch.stack(actions, dim=0).t()
             #print(f"actions shape for mask in forward_probs: {actions.shape}")
@@ -95,7 +105,7 @@ class GFlowNet(nn.Module):
                         #mask[i, 0, actions[i, j]] = 0  # Assuming actions are single values in a column vector
         else:
             pass
-
+        '''
         #mask = init_mask_for_s * mask
         all_probs.mul_(mask)
         del mask, data_list
@@ -125,16 +135,16 @@ class GFlowNet(nn.Module):
         while not done.all():
             done_iterations += 1
 
-            if done_iterations % 100 == 0:
+            if done_iterations % 1000 == 0:
                 log_memory_usage("Sample Iteration " + str(done_iterations))
             else:
                 pass
             #Generate actions for all samples for logging
             #print(f"Type for _actions: {type(log._actions)}")
-            log_memory_usage("Before Forward Probs")
+            #log_memory_usage("Before Forward Probs")
             probs_all, _ = self.forward_probs(s0, data_list, log._actions)
             #print(f"probs_all {probs_all.shape}")
-            log_memory_usage("After Forward Probs Created")
+            #log_memory_usage("After Forward Probs Created")
             actions_all = Categorical(probs_all).sample()
             #print(f"actions_all {actions_all.shape}")
             #log_memory_usage("After Categorical Sampling")
