@@ -73,6 +73,63 @@ class ForwardPolicy(BasePolicy):
         return torch.softmax(x, dim=1), alpha_processed
 
 class BackwardPolicy(nn.Module):
+    def __init__(self, input_dim: int, hidden_dim: int, max_num_actions: int):
+        super(BackwardPolicy, self).__init__()
+        self.hidden_dim = hidden_dim
+        self.max_num_actions = max_num_actions
+
+        # Define the LSTM that will process the trajectories
+        self.lstm = nn.LSTM(input_dim, hidden_dim, batch_first=True)
+
+        # Define a fully connected layer with the max number of actions
+        self.fc = nn.Linear(self.hidden_dim, max_num_actions)
+
+    def forward(self, trajectories: Tensor) -> Tensor:
+        batch_size = trajectories.size(0)  # Number of trajectories
+        max_len = trajectories.size(1)  # Max length of trajectories
+
+        outputs = []
+
+        for i in range(batch_size):
+            # Get the current trajectory and mask for valid actions
+            current_trajectory = trajectories[i, :].unsqueeze(0)  # Add batch dimension
+            valid_mask = (current_trajectory != -1)
+            num_valid_actions = valid_mask.sum().item()
+
+            # Prepare the LSTM input (handling padded sequences)
+            current_lengths = valid_mask.sum(dim=1)
+            packed_input = nn.utils.rnn.pack_padded_sequence(
+                current_trajectory.float().unsqueeze(-1), 
+                current_lengths, 
+                batch_first=True, 
+                enforce_sorted=False
+            )
+            packed_output, _ = self.lstm(packed_input)
+            lstm_out, _ = nn.utils.rnn.pad_packed_sequence(packed_output, batch_first=True)
+
+            # Use the mask to gather the output from the last valid time step
+            idx = (current_lengths - 1).view(-1, 1).expand(len(current_lengths), lstm_out.size(2))
+            idx = idx.unsqueeze(1)
+            lstm_out = lstm_out.gather(1, idx).squeeze(1)
+
+            # Pass through the fully connected layer
+            output = self.fc(lstm_out)
+
+            # Slice off the unnecessary actions
+            output = output[:, :num_valid_actions]
+
+            # Apply softmax for probability distribution over actions
+            output = torch.softmax(output, dim=1)
+
+            # Pad the output to match the maximum number of actions (if needed)
+            padded_output = F.pad(output, (0, max_len - output.size(1)), value=1)
+            outputs.append(padded_output)
+
+        outputs = torch.stack(outputs, dim=0)
+        return outputs
+
+'''        
+class BackwardPolicy(nn.Module):
     def __init__(self, input_dim: int, hidden_dim: int):
         super(BackwardPolicy, self).__init__()
         self.hidden_dim = hidden_dim
@@ -125,44 +182,4 @@ class BackwardPolicy(nn.Module):
         #masks = torch.stack(masks, dim=0)
         gc.collect()
         return outputs
-
-
-'''
-class BackwardPolicy(nn.Module):
-    def __init__(self, input_dim: int, hidden_dim: int):
-        super(BackwardPolicy, self).__init__()
-        self.hidden_dim = hidden_dim
-        self.lstm = nn.LSTM(input_dim, hidden_dim, batch_first=True)
-        self.fc = None
-
-    def forward(self, trajectories: Tensor) -> Tensor:
-        #Create num_actions dynamically based on input
-        #log_memory_usage("Before Defining num_actions")
-        num_actions = (trajectories != -1).sum().item() + 1
-        print(f"Num_actions back policy: {num_actions}")
-        #log_memory_usage("Before Defining Fully Connected Layer")
-        #Define the FC layer dynamically based on num_actions
-        self.fc = nn.Linear(self.hidden_dim, num_actions).to(trajectories.device) 
-        #log_memory_usage("Before Creating Mask")
-        # Create a mask based on the padding value (-1)
-        trajectories = trajectories.float().unsqueeze(-1)
-        mask = (trajectories != -1)
-        #print(f"mask length {mask.shape}")
-        lengths = mask.sum(dim=1).squeeze()
-        print(f"Length of Back Prob {lengths.shape}")
-        #log_memory_usage("Before padding sequences")
-        # Pack the padded sequences
-        packed_input = nn.utils.rnn.pack_padded_sequence(trajectories, lengths, batch_first=True, enforce_sorted=False)
-        packed_output, _ = self.lstm(packed_input)
-        lstm_out, _ = nn.utils.rnn.pad_packed_sequence(packed_output, batch_first=True)
-        #log_memory_usage("Before Gathering Output")
-        # Use the mask to gather the output from the last valid time step
-        idx = (lengths - 1).view(-1, 1).expand(len(lengths), lstm_out.size(2))
-        time_dimension = 1
-        idx = idx.unsqueeze(time_dimension)
-        #log_memory_usage("Before LSTM")
-        lstm_out = lstm_out.gather(time_dimension, idx).squeeze(time_dimension)
-        
-        output = self.fc(lstm_out)
-        return torch.softmax(output, dim=1)
 '''
