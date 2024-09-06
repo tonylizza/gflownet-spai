@@ -28,6 +28,7 @@ class ForwardPolicy(BasePolicy):
         #log_memory_usage("Before Defining GAT2")
         self.gat2 = GATv2Conv(self.hid * self.in_head, self.hid, edge_dim=1, heads=self.out_head)
         self.fc = nn.Linear(self.hid, max_num_actions)
+        #Set up FC layer for alpha
         self.alpha = torch.nn.Parameter(torch.tensor(0.0))  # Starts with equal weighting for reward function mixing parameter
     
     def forward(self, data: Data, actions: List[int]) -> Tuple[Tensor, Tensor]:
@@ -67,8 +68,9 @@ class ForwardPolicy(BasePolicy):
 
             x = x.masked_fill(~mask, float('-inf'))
         #log_memory_usage("Before Softmax")
+        alpha_processed = torch.sigmoid(self.alpha)
         gc.collect() 
-        return torch.softmax(x, dim=1), torch.sigmoid(self.alpha)
+        return torch.softmax(x, dim=1), alpha_processed
 
 class BackwardPolicy(nn.Module):
     def __init__(self, input_dim: int, hidden_dim: int):

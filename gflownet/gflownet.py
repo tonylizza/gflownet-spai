@@ -142,7 +142,7 @@ class GFlowNet(nn.Module):
             #Generate actions for all samples for logging
             #print(f"Type for _actions: {type(log._actions)}")
             #log_memory_usage("Before Forward Probs")
-            probs_all, _ = self.forward_probs(s0, data_list, log._actions)
+            probs_all, alpha = self.forward_probs(s0, data_list, log._actions)
             #print(f"probs_all {probs_all.shape}")
             #log_memory_usage("After Forward Probs Created")
             actions_all = Categorical(probs_all).sample()
@@ -179,13 +179,20 @@ class GFlowNet(nn.Module):
             done[active_indices] = terminated
 
         complete_actions = log.actions.t()
-        #print(f"Complete Actions {complete_actions.shape}")
-        reduced_matrices = self.env.update(s0, complete_actions)
+        #print(f"Complete Actions {type(complete_actions)}")
+        rewards = self.env.update(s0, complete_actions, alpha)
+        '''
         reward_matrices = [resize_sparse_tensor(reduced_matrices[i], (self.env.matrix_size, self.env.matrix_size)) for i in range(len(reduced_matrices))]
-        rewards = torch.tensor([self.env.reward(matrix, len(log._actions), self.forward_policy.alpha) for matrix in reward_matrices], dtype=log.rewards.dtype)
+        print(f"Len Log Actions {len(log._actions)}")
+        rewards_list = []
+        for i in reward_matrices:
+            good_actions = []
+            [good_actions.append(x) for x in complete_actions[i] if x != -1]
+            rewards_list.append(self.env.reward(reward_matrices[i], len(good_actions), alpha))
+        '''
+        rewards = torch.tensor(rewards, dtype=log.rewards.dtype)
+        #print(f"Alpha Parameter: {alpha}")
         log.rewards = rewards
-        del reduced_matrices
-        del reward_matrices
         gc.collect()
         return log if return_log else None
     

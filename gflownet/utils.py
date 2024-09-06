@@ -1,6 +1,7 @@
 import torch
 from torch import Tensor
 from torch_geometric.data import Data
+from typing import Tuple, List
 import scipy.io
 import psutil
 import tracemalloc
@@ -290,3 +291,66 @@ def malloc_usage(description):
     print(f"\nMemory usage at {description}:")
     for stat in top_stats:  # Print top 10 lines
         print(stat)
+
+def update_edges_and_convert_to_sparse(data: Data, actions: List[Tensor], matrix_size: int) -> torch.sparse.FloatTensor:
+    """
+    Removes edges from the PyTorch Geometric Data object based on the actions and converts
+    the resulting graph into a sparse tensor of size (matrix_size, matrix_size).
+    
+    Args:
+        data (Data): The PyTorch Geometric data object representing the graph.
+        actions (List[int]): The list of actions (edge indices) to be removed from the graph.
+        matrix_size (int): The size of the matrix (assumed to be square: matrix_size * matrix_size).
+
+    Returns:
+        torch.sparse.FloatTensor: The resulting sparse tensor after removing edges.
+    """
+    
+    # Get the edge_index and edge_attr from the PyTorch Geometric data object
+    edge_index = data.edge_index  # Shape: [2, num_edges]
+    edge_attr = data.edge_attr if 'edge_attr' in data else None  # Optional edge attributes
+
+   #print(f"Original number of edges: {edge_index.size(1)}")
+
+    actions = [int(action.item()) for action in actions]
+
+    # Convert actions to a set for fast look-up
+    actions_set = set(actions)
+
+    #print(f"Actions to remove: {actions_set}")
+
+    # Filter out the edges indicated by the actions (remove the edges corresponding to the actions)
+    remaining_edges_mask = [i for i in range(edge_index.size(1)) if i not in actions_set]
+
+    if len(remaining_edges_mask) == 0:
+       print(f"No edges left after filtering. Returning an empty sparse tensor.")
+
+   #print(f"Remaining edges after filtering: {remaining_edges_mask}")
+   #print(f"Remaining number of edges: {len(remaining_edges_mask)}")
+
+    remaining_edge_index = edge_index[:, remaining_edges_mask]
+    
+    # If there are edge attributes, filter them as well
+    if edge_attr is not None:
+        remaining_edge_attr = edge_attr[remaining_edges_mask]
+    else:
+        remaining_edge_attr = torch.ones(remaining_edge_index.size(1))  # Default to all 1s for remaining edges
+
+   #print(f"Remaining edge index:\n{remaining_edge_index}")
+   #print(f"Remaining edge attributes:\n{remaining_edge_attr}")
+
+    # Flatten the edge indices into a 1D array suitable for a matrix representation (row * matrix_size + col)
+    row, col = remaining_edge_index
+    flattened_indices = row * matrix_size + col
+
+   #print(f"Flattened indices:\n{flattened_indices}")
+    # Create the sparse tensor of size (matrix_size * matrix_size)
+    sparse_tensor = torch.sparse_coo_tensor(
+        indices=torch.stack([torch.zeros_like(flattened_indices), flattened_indices]),  # Add a zero dimension for batch size
+        values=remaining_edge_attr.float(),  # Edge values (1 by default or based on edge_attr)
+        size=(1, matrix_size * matrix_size),
+        dtype=torch.float32
+    ).coalesce()
+   #print(f"Sparse Tensor non-zeros {sparse_tensor._nnz()}")
+
+    return sparse_tensor
