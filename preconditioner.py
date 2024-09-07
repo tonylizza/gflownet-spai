@@ -24,15 +24,10 @@ class PreconditionerEnv(Env):
         edge_attr = self.matrix._values()
         self.data = Data(edge_index=edge_index, edge_attr=edge_attr.float())
 
-        # List to track removed entries
-        self.removed_entries = []
-
         #Calculate initial metrics
         self.orig_residual = self.calculate_residual(self.original_matrix, self.original_matrix)
         self.orig_flops, _ = self.matrix_flops(self.original_matrix)
 
-        #Alpha is to be moved to the train method where it will be updated as part of the model. This exists just to test the GFlownet functionality.
-        self.alpha = 0.5
 
     def update(self, sparse_matrices: List[torch.sparse.FloatTensor], actions: List[List[int]], alpha: float) -> List[torch.sparse.FloatTensor]:
         batch_size = len(actions)
@@ -55,61 +50,6 @@ class PreconditionerEnv(Env):
             del resized_matrix
             gc.collect()
         return rewards 
-
-    '''
-    def update(self, sparse_matrices: List[torch.sparse.FloatTensor], actions: List[List[int]]) -> List[torch.sparse.FloatTensor]:
-        batch_size = len(actions)
-        #print(f"Action size: {len(actions)}")
-        updated_states = []
-
-
-        for i in range(batch_size):
-            print(f"Non-terminating action size for sample {i}: {len([x for x in actions[i] if x != -1])}")
-            good_actions = []
-            [good_actions.append(x) for x in actions[i] if x != -1]
-            print(f"Good actions {good_actions}")
-            current_indices = sparse_matrices[i]._indices()
-            current_values = sparse_matrices[i]._values()
-            mask = torch.ones(current_indices.size(1), dtype=torch.bool)
-            print(f"Sparse Matrix Shape {sparse_matrices[i].shape}")
-            print(f"Self Matrix size {self.matrix_size}")
-
-            for action in good_actions:
-                action = int(action)  # Convert the action to an integer
-                row, col = divmod(action, self.matrix_size)
-                idx_to_remove = (current_indices[0] == row) & (current_indices[1] == col)
-                if idx_to_remove.any():
-                    removed_value = current_values[idx_to_remove].item()
-                    self.removed_entries.append((row, col, removed_value))
-                    mask &= ~idx_to_remove
-                else:
-                    print(f"No matching entry found for Row {row}, Col {col}")
-
-            print(f"Matrix size before removal: {current_indices.size(1)}")
-            current_indices = current_indices[:, mask]
-            current_values = current_values[mask]
-            print(f"Matrix size after removal: {current_indices.size(1)}")
-            print(f"Final mask size: {mask.sum().item()} elements will remain")
-
-            #current_matrix = torch.sparse_coo_tensor(current_indices, current_values, sparse_matrices[i].size()).coalesce()
-            #updated_matrix = torch.sparse_coo_tensor(current_matrix._indices(), current_matrix._values(), (1, self.matrix_size * self.matrix_size)).coalesce()
-            #updated_matrix = torch.sparse_coo_tensor(current_indices, current_values, sparse_matrices[i].size()).coalesce()
-            # Flatten the 2D indices into 1D indices for the output vector of size [1, 324]
-            flattened_indices = current_indices[0] * self.matrix_size + current_indices[1]
-
-            # Create the updated sparse tensor with a shape (1, self.matrix_size * self.matrix_size)
-            updated_matrix = torch.sparse_coo_tensor(
-                torch.stack([torch.zeros_like(flattened_indices), flattened_indices]),  # Adding a 0 dimension for the batch size
-                current_values,
-                (1, self.matrix_size * self.matrix_size),
-                dtype=torch.float32
-            ).coalesce()
-            print(f"Updated Matrix NNZ {updated_matrix._nnz()}")
-            #print(f"Updated Matrix Shape {updated_matrix.shape}")
-            updated_states.append(updated_matrix)
-        
-        return updated_states 
-    '''
 
 
     def reward(self, s: Tensor, traj_length: int, alpha: float) -> float:
