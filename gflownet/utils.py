@@ -246,9 +246,9 @@ def trajectory_balance_loss(total_flow, rewards, fwd_probs, back_probs):
     eps = 1e-9  # Small epsilon to avoid log(0)
 
     # Ensure all tensors are in the same device and dtype
-    total_flow = total_flow.to(fwd_probs.device).to(fwd_probs.dtype)
-    rewards = rewards.to(fwd_probs.device).to(fwd_probs.dtype)
-    back_probs = back_probs.to(fwd_probs.device).to(fwd_probs.dtype)
+    total_flow = total_flow.to(fwd_probs.dtype)
+    rewards = rewards.to(fwd_probs.dtype)
+    back_probs = back_probs.to(fwd_probs.dtype)
 
     # Calculate the forward log probabilities
     log_fwd_probs = torch.log(fwd_probs + eps)  # Adding a small value to avoid log(0)
@@ -354,3 +354,93 @@ def update_edges_and_convert_to_sparse(data: Data, actions: List[Tensor], matrix
    #print(f"Sparse Tensor non-zeros {sparse_tensor._nnz()}")
 
     return sparse_tensor
+
+def matrix_flops(matrix: Tensor) -> Tuple[int, int]:
+    if matrix.is_sparse:
+        # For sparse tensors, the number of non-zero elements is the size of the values tensor
+        non_zeros = matrix._values().numel()
+        flops = non_zeros * matrix.shape[1] * 2
+    else:
+        # We should be working exclusively with sparse tensors, so maybe replace this if/else statement with an assert. 
+        non_zeros = torch.nonzero(matrix).size(0)
+        flops = 2 * non_zeros        
+    return flops, non_zeros
+
+def calculate_residual(updated_matrix: Tensor, original_matrix: Tensor) -> Tensor:
+    #Calculate residual term, moving to its own method because we only want to calculate ||A*A-I|| once
+    # Residual term: ||M*A - I||
+    i = torch.arange(0, original_matrix.size(0))
+    i = torch.stack([i, i])
+    v = torch.ones(original_matrix.size(0), dtype=torch.float64)
+    sparse_identity = torch.sparse_coo_tensor(i, v, (original_matrix.size(0), original_matrix.size(0)))
+    product = torch.mm(updated_matrix, original_matrix)
+    #print(f"Product {product}")
+    residual = torch.norm(product - sparse_identity)
+    #print(f"residual {residual}")
+
+    return residual
+
+def evaluate_preconditioner(updated_matrix: Tensor, original_matrix: Tensor, orig_residual: float, orig_flops: int, alpha: float) -> float:
+
+    
+    # Compute the computational cost (floating point operations - FLOPs)
+    # For simplicity, we can assume 2 FLOPs for each non-zero element (one for multiplication and one for addition)
+    # in the original matrix when multiplied by the preconditioner
+    # Assuming 'matrix' is the sparse matrix
+    
+    residual = calculate_residual(updated_matrix, original_matrix)
+    #print(f"Updated Matrix Flops Shape: {updated_matrix.shape}")
+    #print(f"Updated Matrix NNZ {updated_matrix._nnz()}")
+    flops, non_zeros = matrix_flops(updated_matrix)
+    
+    # Performance metric
+    #inverse_residual = 1 / torch.log((1 + residual))
+    #Modified so that residual is the denominator as it is expected to grow. We may need to change this.
+    #residual_ratio = orig_residual / residual if residual != 0 else float('inf')
+    residual_ratio = residual / orig_residual if orig_residual != 0 else float('inf')
+    #print(f"Residual for Updated Matrix {residual}")
+    #print(f"Original Residual: {orig_residual}")
+    #print(f"residual_ratio {residual_ratio}")
+    computational_ratio = flops / orig_flops if orig_flops != 0 else float('inf')
+    #print(f"No. flops for Updated Matrix {flops}")
+    #print(f"No. Flops Original Matrix {orig_flops}")
+    #print(f"computational_ratio: {computational_ratio}")
+    
+    performance_metric = alpha * (1 - residual_ratio) + (1 - alpha) * (1 - computational_ratio)
+    #print(f"performance metric {performance_metric}")
+    return performance_metric
+
+def calculate_reward(starting_matrix, updated_matrix, orig_residual, orig_flops, traj_length: int, alpha: float) -> float:
+    # Use the current matrix as a preconditioner and calculate the reward
+    # based on its performance (e.g., reduced iterations, improved stability)
+    #Need to figure out a way to penalize a trajectory to avoid the model picking a blank matrix. For now, dividing by log length of trajectory, but will need to come up with something.
+    #print(f"Reward Method before Traj Length: {reward}")
+    # Compute the computational cost (floating point operations - FLOPs)
+    # For simplicity, we can assume 2 FLOPs for each non-zero element (one for multiplication and one for addition)
+    # in the original matrix when multiplied by the preconditioner
+    # Assuming 'matrix' is the sparse matrix
+    #print(f"SM Type {type(starting_matrix)}")
+    residual = calculate_residual(updated_matrix, starting_matrix)
+    #print(f"Updated Matrix Flops Shape: {updated_matrix.shape}")
+    #print(f"Updated Matrix NNZ {updated_matrix._nnz()}")
+    flops, non_zeros = matrix_flops(updated_matrix)
+    
+    # Performance metric
+    #inverse_residual = 1 / torch.log((1 + residual))
+    #Modified so that residual is the denominator as it is expected to grow. We may need to change this.
+    #residual_ratio = orig_residual / residual if residual != 0 else float('inf')
+    residual_ratio = residual / orig_residual if orig_residual != 0 else float('inf')
+    #print(f"Residual for Updated Matrix {residual}")
+    #print(f"Original Residual: {orig_residual}")
+    #print(f"residual_ratio {residual_ratio}")
+    computational_ratio = flops / orig_flops if orig_flops != 0 else float('inf')
+    #print(f"No. flops for Updated Matrix {flops}")
+    #print(f"No. Flops Original Matrix {orig_flops}")
+    #print(f"computational_ratio: {computational_ratio}")
+    
+    reward = alpha * (1 - residual_ratio) + (1 - alpha) * (1 - computational_ratio)
+    #reward = reward/torch.log(torch.tensor(traj_length, dtype=torch.float64))
+    #reward = (reward/torch.tensor(traj_length, dtype=torch.float64)) * 100
+    reward = reward.to(torch.float64) * 1000
+    #print(f"Reward Method after Traj Length: {reward}")
+    return reward

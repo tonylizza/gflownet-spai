@@ -56,12 +56,15 @@ class ForwardPolicy(BasePolicy):
         #print(f"After GATConv2 x dimensions: {x.shape}")
         # Apply global mean pooling to aggregate node features
         #log_memory_usage("Before Global Mean Pooling")
-        x = global_mean_pool(x, batch=torch.zeros(x.size(0), dtype=torch.long, device=x.device))
+        x = global_mean_pool(x, batch=torch.zeros(x.size(0), dtype=torch.long))
 
         num_actions = edge_attr.size(0) + 1
         #print(f"Global Mean Pooling x dimensions: {x}")
         x = self.fc(x)
         x = x[:, :num_actions]
+        if isinstance(actions, list):
+            actions = torch.tensor(actions, dtype=torch.long) 
+            
         if actions.numel() > 0:
             mask = torch.ones_like(x, dtype=torch.bool)
             mask[:, actions] = 0
