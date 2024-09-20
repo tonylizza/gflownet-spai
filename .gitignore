@@ -4,3 +4,6 @@ training_log*
 detailed_training_log*
 GFlowNet_test_*
 data/*
+tb_logs/
+images/
+epoch-loss.csv

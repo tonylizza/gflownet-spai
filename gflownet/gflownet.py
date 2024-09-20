@@ -16,6 +16,7 @@ class GFlowNet(pl.LightningModule):
     def __init__(self, forward_policy, backward_policy, no_sampling_batch = 32, lr = .00002):
         super().__init__()
         #self.total_flow = Parameter(torch.ones(1))
+        self.automatic_optimization = False
         self.register_buffer('total_flow', torch.ones(1))
         self.forward_policy = forward_policy
         self.backward_policy = backward_policy
@@ -27,7 +28,9 @@ class GFlowNet(pl.LightningModule):
         trajectories = []
         rewards = []
         forward_probs = []
+        fwd_state_flows = []
         #backward_probs = []
+        selected_fwd_actions_list = []
         alphas = []
         iter = 1
         for sample in range(self.no_sampling_batch):
@@ -35,19 +38,26 @@ class GFlowNet(pl.LightningModule):
             #print(f"Iter: {iter}")
             iter = iter + 1
             trajectory = []
+            fwd_state_flow = []
             action_probs_list = []
+            selected_fwd_actions = []
             current_state = batch['data']
+            #print(f"Current State Size {current_state.edge_attr.size(0)}")
             terminated = False
             sampling = 1
             while not terminated:
                 #print(f"Sampling: {sampling}")
                 sampling = sampling + 1
-                action_probs, alpha = self.forward_policy(current_state, actions=trajectory)
+                action_probs, flow, alpha = self.forward_policy(current_state, actions=trajectory)
+                #print(f"Flow Grad: {flow.requires_grad}")
                 #print(f"Action Probs {action_probs}")
                 action_distribution = torch.distributions.Categorical(action_probs)
                 action = action_distribution.sample()
+                selected_action_prob = action_probs[:, action]
+                selected_fwd_actions.append(selected_action_prob)
                 #print(f"Action {action}")
                 trajectory.append(action)
+                fwd_state_flow.append(flow)
                 alphas.append(alpha)
                 action_probs_list.append(action_probs)
                 # Append action to the trajectory
@@ -61,17 +71,49 @@ class GFlowNet(pl.LightningModule):
             alpha = torch.stack(alphas).mean(dim=0)
             reward = self.update_and_compute_reward(batch['data'], trajectory, batch['starting_matrix'], batch['starting_residual'], batch['starting_flops'], batch['matrix_sq_side'], alpha)
             trajectories.append(torch.tensor(trajectory))
+            selected_fwd_actions_list.append(torch.stack(selected_fwd_actions))
+            fwd_state_flows.append(torch.stack(fwd_state_flow, dim=0))
             rewards.append(reward)
 
             # 3. Optionally, calculate the forward/backward probabilities (for trajectory balance loss)
             forward_probs.append(torch.stack(action_probs_list))
 
-        padded_trajectories = rnn_utils.pad_sequence(trajectories, batch_first=True, padding_value=-1)    
+        padded_trajectories = rnn_utils.pad_sequence(trajectories, batch_first=True, padding_value=-1)
+        selected_fwd_actions_list = [torch.tensor(action) if not isinstance(action, torch.Tensor) else action for action in selected_fwd_actions_list]
+        padded_forward_flows = rnn_utils.pad_sequence(fwd_state_flows, batch_first=True, padding_value=0.0)
+        print(f"Padded Forward Flows Grad: {padded_forward_flows.requires_grad}")
+        padded_selected_fwds = rnn_utils.pad_sequence(selected_fwd_actions_list, batch_first=True, padding_value=0.0).squeeze(-1)    
         #backward_probs.append(self.backward_policy(padded_trajectories))  # Backward policy can depend on the trajectory
 
-        backward_probs = self.backward_policy(padded_trajectories)
-        backward_probs = backward_probs.reshape(self.no_sampling_batch, -1)
-        padded_forward_probs = rnn_utils.pad_sequence(forward_probs, batch_first=True, padding_value=1e-9)
+        valid_actions_list = []
+        termination_action_index = batch['data'].edge_attr.size(0) + 1
+        for i in range(self.no_sampling_batch):
+            sample_trajectory = padded_trajectories[i]
+            # Exclude -1 and get unique actions
+            valid_actions = sample_trajectory[sample_trajectory != -1].unique().tolist()
+            # Include termination action
+            #valid_actions.append(termination_action_index)
+            valid_actions_list.append(valid_actions)
+        backward_probs, backward_state_flows = self.backward_policy(trajectories=padded_trajectories, valid_actions_list=valid_actions_list, termination_action_index=termination_action_index)
+        print(f"Backward Probs Orig {backward_probs.shape}")
+        # Use Categorical to sample actions from the backward probabilities
+        # backward_probs shape: [number_batch, max_trajectory_length, num_actions]
+        distribution = torch.distributions.Categorical(probs=backward_probs.squeeze(-2))
+        selected_actions = distribution.sample().unsqueeze(-1)
+        # backward_prob shape: [number_batch, max_trajectory_length, 1, num_actions]
+        # selected_actions shape: [number_batch, max_trajectory_length, 1] (actual actions taken)
+
+        # Ensure selected_actions has the right shape for indexing
+        actions_expanded = selected_actions.unsqueeze(-1)  # Shape becomes [number_batch, max_trajectory_length, 1, 1]
+
+        # Use torch.gather to index into backward_prob and extract probabilities of the selected actions
+        selected_back_probs = torch.gather(backward_probs, dim=-1, index=actions_expanded).squeeze(-1)
+
+        # selected_back_probs will now be of shape [number_batch, max_trajectory_length, 1] containing the probabilities for the selected actions
+
+        print(f"Backward Probs Resize {backward_probs.shape}")
+        padded_forward_probs = rnn_utils.pad_sequence(forward_probs, batch_first=True, padding_value=0)
+        print(f"Padded Forward Probs {padded_forward_probs.shape}")
 
 
 
@@ -79,7 +121,10 @@ class GFlowNet(pl.LightningModule):
             "trajectories": trajectories,
             "rewards": torch.tensor(rewards),
             "forward_probs": padded_forward_probs,
-            "backward_probs": backward_probs
+            "backward_probs": backward_probs,
+            "padded_forward_flows": padded_forward_flows,
+            "padded_selected_fwds": padded_selected_fwds,
+            "selected_back_probs": selected_back_probs
         }
 
 
@@ -92,16 +137,35 @@ class GFlowNet(pl.LightningModule):
         rewards = output["rewards"]
         forward_probs = output["forward_probs"]
         backward_probs = output["backward_probs"]
-
-        print(f"Forward Probs Shape {forward_probs.shape}")
-        print(f"Back Probs Shape {backward_probs.shape}")
+        selected_fwd_probs = output['padded_selected_fwds']
+        selected_back_probs = output['selected_back_probs']
+        print(f"Selected Fwd Probs Grad {selected_fwd_probs.shape}")
+        print(f"Selected Back Probs Grad {selected_back_probs.shape}")
+        print(f"Rewards {rewards}")
+        padded_forward_flows = output["padded_forward_flows"]
+        #print(f"Forward Probs Shape {forward_probs}")
+        #print(f"Back Probs Shape {backward_probs}")
+        avg_reward = rewards.mean()
 
         # Compute the loss based on trajectory balance (or another loss function)
-        loss = trajectory_balance_loss(self.total_flow, rewards, forward_probs, backward_probs)
+        loss = trajectory_balance_loss(rewards, selected_fwd_probs, selected_back_probs)
         print(f"Loss: {loss}")
 
+        reward_per_loss = avg_reward/loss
+        self.log('avg_reward', avg_reward, on_epoch=True)
         # Log the loss and return it
-        self.log('train_loss', loss, on_step=True)
+        self.log('train_loss', loss, on_step=True, on_epoch=True)
+        self.log('reward_per_loss', reward_per_loss, on_epoch=True)
+
+            # Perform backward pass
+        self.manual_backward(loss)
+    
+        self.check_gradients()
+
+        # Log the action distribution (histogram of probabilities)
+        for i, probs in enumerate(forward_probs):
+            self.logger.experiment.add_histogram(f'action_distribution_{i}', probs, self.current_epoch)
+
         return loss
 
 
@@ -141,5 +205,28 @@ class GFlowNet(pl.LightningModule):
                 'monitor': 'train_loss'  # The metric to monitor for reducing LR
             }
         }
-    
+
+    def check_gradients(self):
+        print("\nChecking Gradients and Parameters")
+        for name, param in self.named_parameters():
+            if param.grad is not None:
+                print(f"Parameter: {name}")
+                print(f"Values: {param}")
+                print(f"Gradients: {param.grad}")
+            else:
+                print(f"Parameter: {name} has no gradients.")
+
+    def on_before_backward(self, loss):
+        # Collect gradients only for parameters that have non-None gradients
+        #self.check_gradients()
+        grads = [p.grad.detach() for p in self.parameters() if p.grad is not None]
+        
+        if len(grads) > 0:
+            # Compute the gradient norm if there are valid gradients
+            grad_norm = torch.norm(torch.stack([torch.norm(g, 2) for g in grads]))
+            self.log('grad_norm', grad_norm)
+        else:
+            # Optionally, log a warning or handle the case where no gradients are available
+            self.log('grad_norm', torch.tensor(0.0))
+
 

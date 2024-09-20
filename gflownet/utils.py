@@ -224,8 +224,42 @@ def concatenate_sparse_tensors(sparse_tensors, dim=0):
     concatenated_size[dim] = sum(size[dim] for size in sizes)
 
     return torch.sparse_coo_tensor(concatenated_indices, concatenated_values, size=concatenated_size)
+'''
+def trajectory_balance_loss(forward_flow, rewards, fwd_probs, back_probs):
+    eps = 1e-9  # Small epsilon to avoid log(0)
 
-def trajectory_balance_loss(total_flow, rewards, fwd_probs, back_probs):
+    # Log of probabilities for forward and backward policies
+    #print(forward_flow.requires_grad)
+    #print(f"Forward Flow Val {forward_flow}")
+    #print(fwd_probs.requires_grad)
+    #print(back_probs.requires_grad)
+    log_fwd_probs = torch.log(fwd_probs + eps)  # Shape: (batch_size, trajectory_length, 1, num_actions)
+    log_back_probs = torch.log(back_probs + eps)  # Same shape as log_fwd_probs
+    #forward_flow_sum = forward_flow.sum(dim=1)
+    #print(f"forward_flow_sum {forward_flow_sum.shape}")
+    # Sum the log probabilities along the action dimension (dim=-1)
+    log_fwd_probs_sum = log_fwd_probs.sum(dim=1)  # Shape: (batch_size, num_actions, 1)
+    log_back_probs_sum = log_back_probs.sum(dim=1)  # Same shape as log_fwd_probs_sum
+    #print(f"log_fwd_probs_sum {log_fwd_probs_sum.shape}")
+    #print(f"log_back_probs_sum {log_back_probs_sum.shape}")
+    # Sum log probabilities along the trajectory (dim=1)
+    #log_fwd_probs_total = log_fwd_probs_sum.squeeze(1)  # Shape: (batch_size,)
+    #log_back_probs_total = log_back_probs_sum.squeeze(1)  # Shape: (batch_size,)
+    #print(f"log_fwd_probs_total {log_fwd_probs_total.shape}")
+    #print(f"log_back_probs_total {log_back_probs_total.shape}")
+    
+    # Compute log-likelihoods
+    #log_lhs = torch.log(forward_flow + eps).sum(dim=1) + log_fwd_probs_sum  # Forward flow + forward probabilities sum
+    log_lhs = torch.log(forward_flow + eps).unsqueeze(-1) + log_fwd_probs_sum
+    log_rhs = torch.log(rewards.unsqueeze(-1) + eps) + log_back_probs_sum  # Rewards (backward flow) + backward probabilities sum
+    
+    # Compute the trajectory balance loss
+    loss = (log_lhs - log_rhs) ** 2
+    
+    return loss.mean()  # Return the mean loss over the batch
+'''
+
+def trajectory_balance_loss(rewards, fwd_probs, back_probs):
     """
     Computes the mean trajectory balance loss for a collection of samples. For
     more information, see Bengio et al. (2022): https://arxiv.org/abs/2201.13259
@@ -246,7 +280,7 @@ def trajectory_balance_loss(total_flow, rewards, fwd_probs, back_probs):
     eps = 1e-9  # Small epsilon to avoid log(0)
 
     # Ensure all tensors are in the same device and dtype
-    total_flow = total_flow.to(fwd_probs.dtype)
+    #total_flow = total_flow.to(fwd_probs.dtype)
     rewards = rewards.to(fwd_probs.dtype)
     back_probs = back_probs.to(fwd_probs.dtype)
 
@@ -259,6 +293,7 @@ def trajectory_balance_loss(total_flow, rewards, fwd_probs, back_probs):
     # Sum log probabilities along the trajectory
     log_fwd_probs_sum = log_fwd_probs.sum(dim=-1)
     log_back_probs_sum = log_back_probs.sum(dim=-1)
+    print(f"Log Back Shape {log_back_probs_sum.shape}")
     
     # Use log-sum-exp trick for numerical stability
     max_log_fwd = log_fwd_probs_sum.max(dim=0, keepdim=True)[0]
@@ -269,13 +304,15 @@ def trajectory_balance_loss(total_flow, rewards, fwd_probs, back_probs):
     normalized_log_back = log_back_probs_sum - max_log_back
     
     # Compute lhs and rhs in the log domain
-    log_lhs = torch.log(total_flow + eps) + normalized_log_fwd
-    log_rhs = torch.log(rewards + eps) + normalized_log_back
+    log_lhs = normalized_log_fwd
+    log_rhs = torch.log(rewards.unsqueeze(-1) + eps) + normalized_log_back
     
     # Compute the trajectory balance loss
     loss = (log_lhs - log_rhs)**2
     
     return loss.mean()
+
+
 
 def log_memory_usage(stage: str):
     process = psutil.Process()
