@@ -290,7 +290,7 @@ class GFlowNet(pl.LightningModule):
                 sampled_M_x = lambda x: ilu.solve(x)
                 sampled_M = LinearOperator(batch['original_csr'].shape, lambda x: custom_solve_with_modified_LU(x, L_copy, U_copy))
                 #sampled_M = decompose_ilu_and_create_linear_operator(sampled_csr)
-                _, _, sparse_iterations, sparse_time = solve_with_gmres(sampled_M, batch['b_vector'], max_iters=20000)
+                _, _, sparse_iterations, sparse_time = solve_with_gmres(batch['original_csr'], batch['b_vector'], M=sampled_M, max_iters=20000)
                 print(f"GMRES sparse preconditioner")
                 
                 results.append({
