@@ -5,6 +5,9 @@ from typing import Tuple, List
 import scipy.io
 import psutil
 import tracemalloc
+from scipy.sparse import csr_matrix, csc_matrix, triu, tril
+from scipy.sparse.linalg import gmres, LinearOperator, splu, spilu
+import numpy as np
 
 class SparseTensorManipulator:
     def __init__(self, sparse_tensor, state_dim):
@@ -293,7 +296,7 @@ def trajectory_balance_loss(rewards, fwd_probs, back_probs):
     # Sum log probabilities along the trajectory
     log_fwd_probs_sum = log_fwd_probs.sum(dim=-1)
     log_back_probs_sum = log_back_probs.sum(dim=-1)
-    print(f"Log Back Shape {log_back_probs_sum.shape}")
+    #print(f"Log Back Shape {log_back_probs_sum.shape}")
     
     # Use log-sum-exp trick for numerical stability
     max_log_fwd = log_fwd_probs_sum.max(dim=0, keepdim=True)[0]
@@ -481,3 +484,92 @@ def calculate_reward(starting_matrix, updated_matrix, orig_residual, orig_flops,
     reward = reward.to(torch.float64) * 1000
     #print(f"Reward Method after Traj Length: {reward}")
     return reward
+
+import torch
+from scipy.sparse import csr_matrix
+
+def torch_sparse_to_csr(sparse_tensor: torch.sparse.FloatTensor, matrix_size: int) -> csr_matrix:
+    """
+    Converts a PyTorch sparse tensor to a SciPy csr_matrix.
+    
+    Args:
+        sparse_tensor (torch.sparse.FloatTensor): The PyTorch sparse tensor (coo format).
+        matrix_size (int): The size of the matrix (assumed to be square: matrix_size * matrix_size).
+        
+    Returns:
+        csr_matrix: The resulting SciPy CSR matrix.
+    """
+    # Ensure the tensor is in COO format (should be coalesced)
+    sparse_tensor = sparse_tensor.double()
+    sparse_tensor = sparse_tensor.coalesce()
+
+    # Extract the indices (non-zero locations) and values from the PyTorch sparse tensor
+    indices = sparse_tensor.indices()  # Shape: [2, num_nonzero_entries]
+    values = sparse_tensor.values()  # Shape: [num_nonzero_entries]
+
+    # Extract row and column indices
+    flattened_indices = indices[1]  # We used flattened indices in the original tensor creation
+    
+    # Convert flattened indices back to row and column indices
+    row_indices = flattened_indices // matrix_size
+    col_indices = flattened_indices % matrix_size
+
+    # Convert PyTorch tensors to NumPy arrays for use in SciPy
+    row_indices = row_indices.numpy()
+    col_indices = col_indices.numpy()
+    values = values.numpy()
+
+    # Create the SciPy csr_matrix
+    csr = csr_matrix((values, (row_indices, col_indices)), shape=(matrix_size, matrix_size))
+
+    return csr
+
+def decompose_ilu_and_create_linear_operator(ilu_matrix):
+    # Extract the lower triangular part (including the diagonal) as L
+
+    ilu_matrix = ilu_matrix.tocsc()
+    L = tril(ilu_matrix, k=-1) + csc_matrix(np.eye(ilu_matrix.shape[0]))
+
+    #L = L.tocsc()
+
+    # Extract the upper triangular part (including the diagonal), but we will subtract the identity matrix later
+    U = triu(ilu_matrix, format='csc')
+
+
+    M = LinearOperator(shape=L.shape, matvec=lambda x: apply_ilu_preconditioner(x, L, U))
+
+
+    return M
+
+def apply_ilu_preconditioner(x, L, U):
+    # Solve L (Ly = x) for y, using forward substitution
+    y = spilu(L).solve(x)
+    
+    # Solve U (Uz = y) for z, using backward substitution
+    z = spilu(U).solve(y)
+    
+    return z
+
+
+def convert_sparse_idx_to_row_col(data_index: int, matrix_size: int) -> Tuple[int, int]:
+    row_index = data_index // matrix_size
+    col_index = data_index % matrix_size
+
+    # Convert PyTorch tensors to NumPy arrays for use in SciPy
+    row = row_index.numpy()
+    col = col_index.numpy()
+
+    return row, col
+
+def custom_solve_with_modified_LU(x, L, U):
+    """
+    Custom solver using modified L and U matrices.
+    """
+
+    # Forward substitution for L (Ly = x)
+    y = splu(L).solve(x)
+
+    # Backward substitution for U (Uz = y)
+    z = splu(U).solve(y)
+
+    return z

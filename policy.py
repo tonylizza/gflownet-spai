@@ -64,6 +64,10 @@ class ForwardPolicy(BasePolicy):
         #print(f"State potential requires grad: {state_potential.requires_grad}")
 
         num_actions = edge_attr.size(0) + 1
+        #Create a diagonal mask to prevent removal of diagonal elements (required for ILU)
+        diagonal_mask = edge_index[0] != edge_index[1]
+        diagonal_mask = torch.cat([diagonal_mask, torch.tensor([True])])
+
         #print(f"Global Mean Pooling x dimensions: {x}")
         x = self.fc(x)
         x = x[:, :num_actions]
@@ -71,10 +75,16 @@ class ForwardPolicy(BasePolicy):
             actions = torch.tensor(actions, dtype=torch.long) 
             
         if actions.numel() > 0:
-            mask = torch.ones_like(x, dtype=torch.bool)
-            mask[:, actions] = 0
+            action_mask = torch.ones_like(x, dtype=torch.bool)
+            action_mask[:, actions] = 0
 
-            x = x.masked_fill(~mask, float('-inf'))
+            mask = action_mask & diagonal_mask
+        
+        else:
+            mask = diagonal_mask
+
+            
+        x = x.masked_fill(~mask, float('-inf'))
         #log_memory_usage("Before Softmax")
         alpha_processed = torch.sigmoid(self.alpha)
         gc.collect() 

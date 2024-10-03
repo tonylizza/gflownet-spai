@@ -4,7 +4,7 @@ from tqdm import tqdm
 import numpy as np
 from scipy.io import mmread
 from scipy.sparse.linalg import gmres, spilu, LinearOperator
-from scipy.sparse import csr_matrix
+from scipy.sparse import csr_matrix, csc_matrix
 import time
 
 def validate_gflownet(model, validation_data_module, max_iters=100):
@@ -50,6 +50,10 @@ def load_mtx_file(file_path):
     matrix = mmread(file_path)
     return csr_matrix(matrix)
 
+def load_mtx_file_csc(file_path):
+    matrix = mmread(file_path)
+    return csc_matrix(matrix)
+
 def load_vector_mtx(file_path):
     vector = mmread(file_path)  # Load the vector (could be sparse or dense)
     
@@ -58,12 +62,13 @@ def load_vector_mtx(file_path):
         vector = vector.toarray()
     
     # Flatten the array if it's a row or column vector
+    vector = np.array(vector)
     vector = vector.flatten()
     
     return vector
 
 # Function to solve the system using GMRES with an optional preconditioner
-def solve_with_gmres(A, b, M=None):
+def solve_with_gmres(A, b, M=None, max_iters=20000):
     # Ensure b is a 1D array with the same number of rows as A
     b = b.flatten()
     if b.shape[0] != A.shape[0]:
@@ -77,13 +82,14 @@ def solve_with_gmres(A, b, M=None):
     
     # Callback function to capture residual norm at each iteration
     def callback(rk):
+        print(rk)
         residuals.append(rk)
     
     # Measure computational time
     start_time = time.time()
     
     # Use GMRES to solve the system Ax = b with preconditioner M
-    x, exitCode = gmres(A, b, x0=x0, M=M, maxiter=10260, callback=callback)
+    x, exitCode = gmres(A, b, x0=x0, M=M, maxiter=max_iters, callback=callback)
     
     elapsed_time = time.time() - start_time
     

@@ -7,10 +7,15 @@ import torch.nn.utils.rnn as rnn_utils
 from torch_geometric.data import Data
 import pytorch_lightning as pl
 from .log import Log
-from .utils import resize_sparse_tensor, log_memory_usage, malloc_usage, calculate_reward, update_edges_and_convert_to_sparse, trajectory_balance_loss
+from .utils import resize_sparse_tensor, log_memory_usage, malloc_usage, calculate_reward, update_edges_and_convert_to_sparse, trajectory_balance_loss, decompose_ilu_and_create_linear_operator, custom_solve_with_modified_LU
 from typing import List
 from .dataset import *
 import gc
+from tqdm import tqdm
+from .validate import solve_with_gmres
+from .utils import torch_sparse_to_csr, convert_sparse_idx_to_row_col
+from scipy.sparse import csr_matrix
+from scipy.sparse.linalg import gmres, LinearOperator, spilu
 
 class GFlowNet(pl.LightningModule):
     def __init__(self, forward_policy, backward_policy, no_sampling_batch = 32, lr = .00002):
@@ -81,7 +86,7 @@ class GFlowNet(pl.LightningModule):
         padded_trajectories = rnn_utils.pad_sequence(trajectories, batch_first=True, padding_value=-1)
         selected_fwd_actions_list = [torch.tensor(action) if not isinstance(action, torch.Tensor) else action for action in selected_fwd_actions_list]
         padded_forward_flows = rnn_utils.pad_sequence(fwd_state_flows, batch_first=True, padding_value=0.0)
-        print(f"Padded Forward Flows Grad: {padded_forward_flows.requires_grad}")
+        #print(f"Padded Forward Flows Grad: {padded_forward_flows.requires_grad}")
         padded_selected_fwds = rnn_utils.pad_sequence(selected_fwd_actions_list, batch_first=True, padding_value=0.0).squeeze(-1)    
         #backward_probs.append(self.backward_policy(padded_trajectories))  # Backward policy can depend on the trajectory
 
@@ -95,7 +100,7 @@ class GFlowNet(pl.LightningModule):
             #valid_actions.append(termination_action_index)
             valid_actions_list.append(valid_actions)
         backward_probs, backward_state_flows = self.backward_policy(trajectories=padded_trajectories, valid_actions_list=valid_actions_list, termination_action_index=termination_action_index)
-        print(f"Backward Probs Orig {backward_probs.shape}")
+        #print(f"Backward Probs Orig {backward_probs.shape}")
         # Use Categorical to sample actions from the backward probabilities
         # backward_probs shape: [number_batch, max_trajectory_length, num_actions]
         distribution = torch.distributions.Categorical(probs=backward_probs.squeeze(-2))
@@ -111,9 +116,9 @@ class GFlowNet(pl.LightningModule):
 
         # selected_back_probs will now be of shape [number_batch, max_trajectory_length, 1] containing the probabilities for the selected actions
 
-        print(f"Backward Probs Resize {backward_probs.shape}")
+        #print(f"Backward Probs Resize {backward_probs.shape}")
         padded_forward_probs = rnn_utils.pad_sequence(forward_probs, batch_first=True, padding_value=0)
-        print(f"Padded Forward Probs {padded_forward_probs.shape}")
+        #print(f"Padded Forward Probs {padded_forward_probs.shape}")
 
 
 
@@ -139,9 +144,9 @@ class GFlowNet(pl.LightningModule):
         backward_probs = output["backward_probs"]
         selected_fwd_probs = output['padded_selected_fwds']
         selected_back_probs = output['selected_back_probs']
-        print(f"Selected Fwd Probs Grad {selected_fwd_probs.shape}")
-        print(f"Selected Back Probs Grad {selected_back_probs.shape}")
-        print(f"Rewards {rewards}")
+        #print(f"Selected Fwd Probs Grad {selected_fwd_probs.shape}")
+        #print(f"Selected Back Probs Grad {selected_back_probs.shape}")
+        #print(f"Rewards {rewards}")
         padded_forward_flows = output["padded_forward_flows"]
         #print(f"Forward Probs Shape {forward_probs}")
         #print(f"Back Probs Shape {backward_probs}")
@@ -160,7 +165,7 @@ class GFlowNet(pl.LightningModule):
             # Perform backward pass
         self.manual_backward(loss)
     
-        self.check_gradients()
+        #self.check_gradients()
 
         # Log the action distribution (histogram of probabilities)
         for i, probs in enumerate(forward_probs):
@@ -229,4 +234,121 @@ class GFlowNet(pl.LightningModule):
             # Optionally, log a warning or handle the case where no gradients are available
             self.log('grad_norm', torch.tensor(0.0))
 
+    def on_train_end(self):
+        """
+        This method is called after training is complete.
+        We use it to run validation after all training epochs are done.
+        """
+        results = self.run_validation()
+        aggregated_results = self.aggregate_validation_results(results)
+        # Manually log the results using logger
+        if self.logger:
+            # Assuming you're using TensorBoard, WandB, etc.
+            self.logger.experiment.add_scalar('avg_original_iterations', aggregated_results['avg_original_iters'], global_step=self.current_epoch)
+            self.logger.experiment.add_scalar('avg_original_time', aggregated_results['avg_original_time'], global_step=self.current_epoch)
+            self.logger.experiment.add_scalar('avg_ilu_iterations', aggregated_results['avg_ilu_iters'], global_step=self.current_epoch)
+            self.logger.experiment.add_scalar('avg_ilu_time', aggregated_results['avg_ilu_time'], global_step=self.current_epoch)
+            self.logger.experiment.add_scalar('avg_sparse_iterations', aggregated_results['avg_sparse_iters'], global_step=self.current_epoch)
+            self.logger.experiment.add_scalar('avg_sparse_time', aggregated_results['avg_sparse_time'], global_step=self.current_epoch)
+
+        # If you are using other loggers (like WandB), you may need to adapt this accordingly
+        print(f"Logged validation results after training epoch {self.current_epoch}")
+
+    def run_validation(self):
+        """
+        Manually run validation using the validation data loader.
+        """
+        self.forward_policy.eval()  # Set the model to evaluation mode
+
+        # Loop over the validation dataloader
+        results = []
+        with torch.no_grad():
+            for batch in tqdm(self.trainer.datamodule.val_dataloader()):
+                M_ilu = decompose_ilu_and_create_linear_operator(batch['starting_csr'])
+                
+                sampled_trajectory = self.sample_trajectory(batch)
+                _, _, original_iterations, original_time = solve_with_gmres(batch['original_csr'], batch['b_vector'], max_iters=batch['matrix_sq_side'])
+                print(f"GMRES no preconditioner")
+                ilu = spilu(batch['original_csr'], permc_spec = "NATURAL")
+                L = ilu.L
+                U = ilu.U
+                L_copy = ilu.L.copy().tocoo()
+                U_copy = ilu.U.copy().tocoo()
+                M_x = lambda x: ilu.solve(x)
+                M = LinearOperator(batch['original_csr'].shape, lambda x: custom_solve_with_modified_LU(x, L, U))
+                _, _, ilu_iterations, ilu_time = solve_with_gmres(batch['original_csr'], batch['b_vector'], M=M, max_iters=20000)
+                print(f"GMRES orig preconditioner")
+                for i in sampled_trajectory:
+                    row, col = convert_sparse_idx_to_row_col(i, batch['matrix_sq_side'])
+                    if row != col:
+                        L_copy.data[(L_copy.row == row) & (L_copy.col == col)] = 0
+                        U_copy.data[(U_copy.row == row) & (U_copy.col == col)] = 0
+                #sampled_matrix = update_edges_and_convert_to_sparse(batch['data'], sampled_trajectory, batch['matrix_sq_side'])
+                #sampled_csr = torch_sparse_to_csr(sampled_matrix, batch['matrix_sq_side'])
+                L_copy = L_copy.tocsc()
+                U_copy = U_copy.tocsc()
+                sampled_M_x = lambda x: ilu.solve(x)
+                sampled_M = LinearOperator(batch['original_csr'].shape, lambda x: custom_solve_with_modified_LU(x, L_copy, U_copy))
+                #sampled_M = decompose_ilu_and_create_linear_operator(sampled_csr)
+                _, _, sparse_iterations, sparse_time = solve_with_gmres(sampled_M, batch['b_vector'], max_iters=20000)
+                print(f"GMRES sparse preconditioner")
+                
+                results.append({
+                    "original_iterations": original_iterations,
+                    "original_time": original_time,
+                    "ilu_iterations": ilu_iterations,
+                    "ilu_time": ilu_time,
+                    "sparse_iterations": sparse_iterations,
+                    "sparse_time": sparse_time,
+                })
+
+        return results
+        # After validation, aggregate and log the results
+        
+
+    def aggregate_validation_results(self, outputs):
+        """
+        Aggregate the results from validation and log them.
+        """
+        original_iters = [x['original_iterations'] for x in outputs]
+        original_times = [x['original_time'] for x in outputs]
+        ilu_iters = [x['ilu_iterations'] for x in outputs]
+        ilu_times = [x['ilu_time'] for x in outputs]
+        sparse_iters = [x['sparse_iterations'] for x in outputs]
+        sparse_times = [x['sparse_time'] for x in outputs]
+
+        # Convert to floating point before computing mean
+        avg_original_iters = torch.mean(torch.tensor(original_iters).float())
+        avg_original_time = torch.mean(torch.tensor(original_times).float())
+        avg_ilu_iters = torch.mean(torch.tensor(ilu_iters).float())
+        avg_ilu_time = torch.mean(torch.tensor(ilu_times).float())                          
+        avg_sparse_iters = torch.mean(torch.tensor(sparse_iters).float())
+        avg_sparse_time = torch.mean(torch.tensor(sparse_times).float())
+
+        return {
+            'avg_original_iters': avg_original_iters,
+            'avg_original_time': avg_original_time,
+            'avg_ilu_iters': avg_ilu_iters,
+            'avg_ilu_time': avg_ilu_time,
+            'avg_sparse_iters': avg_sparse_iters,
+            'avg_sparse_time': avg_sparse_time
+        }
+
+
+    def sample_trajectory(self, batch):
+        """
+        Function to sample a trajectory from the GFlowNet model.
+        """
+        trajectory = []
+        current_state = batch['data']
+        terminated = False
+        while not terminated:
+            action_probs, flow, alpha = self.forward_policy(current_state, actions=trajectory)
+            action_distribution = Categorical(action_probs)
+            action = action_distribution.sample()
+            trajectory.append(action)
+
+            if action == (action_probs.shape[-1] - 1):
+                terminated = True
+        return trajectory
 

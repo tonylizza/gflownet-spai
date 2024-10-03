@@ -7,3 +7,11 @@ data/*
 tb_logs/
 images/
 epoch-loss.csv
+*.csv
+test_dtaloader.ipynb
+Test_mask.ipynb
+TestingPreconditioners.ipynb
+getLargeMatrices.ipynb
+data_directory
+epoch-loss.csv
+process_matrices.ipynb
