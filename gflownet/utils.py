@@ -265,7 +265,7 @@ def trajectory_balance_loss(forward_flow, rewards, fwd_probs, back_probs):
 def trajectory_balance_loss(rewards, fwd_probs, back_probs):
     """
     Computes the mean trajectory balance loss for a collection of samples. For
-    more information, see Bengio et al. (2022): https://arxiv.org/abs/2201.13259
+    more information, see Bengio et al. (2022):
     
     Args:
         total_flow: The estimated total flow used by the GFlowNet when drawing
@@ -561,15 +561,20 @@ def convert_sparse_idx_to_row_col(data_index: int, matrix_size: int) -> Tuple[in
 
     return row, col
 
-def custom_solve_with_modified_LU(x, L, U):
+def custom_solve_with_modified_LU(x, L, U, perm_r=None, perm_c=None):
     """
     Custom solver using modified L and U matrices.
     """
+    if perm_r is not None:
+        x = x[perm_r]
 
     # Forward substitution for L (Ly = x)
     y = splu(L).solve(x)
 
     # Backward substitution for U (Uz = y)
     z = splu(U).solve(y)
+
+    if perm_c is not None:
+        z = z[np.argsort(perm_c)]
 
     return z

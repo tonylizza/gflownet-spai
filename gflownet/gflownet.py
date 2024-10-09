@@ -240,7 +240,7 @@ class GFlowNet(pl.LightningModule):
         We use it to run validation after all training epochs are done.
         """
         results = self.run_validation()
-        aggregated_results = self.aggregate_validation_results(results)
+        aggregated_results = self.aggregate_validation_results(results[0])
         # Manually log the results using logger
         if self.logger:
             # Assuming you're using TensorBoard, WandB, etc.
@@ -264,44 +264,47 @@ class GFlowNet(pl.LightningModule):
         results = []
         with torch.no_grad():
             for batch in tqdm(self.trainer.datamodule.val_dataloader()):
-                M_ilu = decompose_ilu_and_create_linear_operator(batch['starting_csr'])
                 
-                sampled_trajectory = self.sample_trajectory(batch)
                 _, _, original_iterations, original_time = solve_with_gmres(batch['original_csr'], batch['b_vector'], max_iters=batch['matrix_sq_side'])
                 print(f"GMRES no preconditioner")
                 ilu = spilu(batch['original_csr'], permc_spec = "NATURAL")
                 L = ilu.L
                 U = ilu.U
-                L_copy = ilu.L.copy().tocoo()
-                U_copy = ilu.U.copy().tocoo()
+                
                 M_x = lambda x: ilu.solve(x)
                 M = LinearOperator(batch['original_csr'].shape, lambda x: custom_solve_with_modified_LU(x, L, U))
-                _, _, ilu_iterations, ilu_time = solve_with_gmres(batch['original_csr'], batch['b_vector'], M=M, max_iters=20000)
+                _, _, ilu_iterations, ilu_time = solve_with_gmres(batch['original_csr'], batch['b_vector'], M=M, max_iters=batch['matrix_sq_side'])
                 print(f"GMRES orig preconditioner")
-                for i in sampled_trajectory:
-                    row, col = convert_sparse_idx_to_row_col(i, batch['matrix_sq_side'])
-                    if row != col:
-                        L_copy.data[(L_copy.row == row) & (L_copy.col == col)] = 0
-                        U_copy.data[(U_copy.row == row) & (U_copy.col == col)] = 0
-                #sampled_matrix = update_edges_and_convert_to_sparse(batch['data'], sampled_trajectory, batch['matrix_sq_side'])
-                #sampled_csr = torch_sparse_to_csr(sampled_matrix, batch['matrix_sq_side'])
-                L_copy = L_copy.tocsc()
-                U_copy = U_copy.tocsc()
-                sampled_M_x = lambda x: ilu.solve(x)
-                sampled_M = LinearOperator(batch['original_csr'].shape, lambda x: custom_solve_with_modified_LU(x, L_copy, U_copy))
-                #sampled_M = decompose_ilu_and_create_linear_operator(sampled_csr)
-                _, _, sparse_iterations, sparse_time = solve_with_gmres(batch['original_csr'], batch['b_vector'], M=sampled_M, max_iters=20000)
-                print(f"GMRES sparse preconditioner")
-                
-                results.append({
-                    "original_iterations": original_iterations,
-                    "original_time": original_time,
-                    "ilu_iterations": ilu_iterations,
-                    "ilu_time": ilu_time,
-                    "sparse_iterations": sparse_iterations,
-                    "sparse_time": sparse_time,
-                })
+                batch_results = []
+                for _ in range(10):
+                    sampled_trajectory = self.sample_trajectory(batch)
+                    L_copy = ilu.L.copy().tocoo()
+                    U_copy = ilu.U.copy().tocoo()
+                    for i in sampled_trajectory:
+                        row, col = convert_sparse_idx_to_row_col(i, batch['matrix_sq_side'])
+                        if row != col:
+                            L_copy.data[(L_copy.row == row) & (L_copy.col == col)] = 0
+                            U_copy.data[(U_copy.row == row) & (U_copy.col == col)] = 0
+                    #sampled_matrix = update_edges_and_convert_to_sparse(batch['data'], sampled_trajectory, batch['matrix_sq_side'])
+                    #sampled_csr = torch_sparse_to_csr(sampled_matrix, batch['matrix_sq_side'])
+                    L_copy = L_copy.tocsc()
+                    U_copy = U_copy.tocsc()
+                    #sampled_M_x = lambda x: ilu.solve(x)
+                    sampled_M = LinearOperator(batch['original_csr'].shape, lambda x: custom_solve_with_modified_LU(x, L_copy, U_copy))
+                    #sampled_M = decompose_ilu_and_create_linear_operator(sampled_csr)
+                    _, _, sparse_iterations, sparse_time = solve_with_gmres(batch['original_csr'], batch['b_vector'], M=sampled_M, max_iters=batch['matrix_sq_side'])
+                    print(f"GMRES sparse preconditioner")
+                    
+                    batch_results.append({
+                        "original_iterations": original_iterations,
+                        "original_time": original_time,
+                        "ilu_iterations": ilu_iterations,
+                        "ilu_time": ilu_time,
+                        "sparse_iterations": sparse_iterations,
+                        "sparse_time": sparse_time,
+                    })
 
+        results.append(batch_results)
         return results
         # After validation, aggregate and log the results
         
