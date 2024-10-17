@@ -82,7 +82,7 @@ def solve_with_gmres(A, b, M=None, max_iters=20000):
     
     # Callback function to capture residual norm at each iteration
     def callback(rk):
-        print(rk)
+        #print(rk)
         residuals.append(rk)
     
     # Measure computational time

@@ -63,7 +63,7 @@ class ForwardPolicy(BasePolicy):
         #Compute state potential
         #print(f"State potential requires grad: {state_potential.requires_grad}")
 
-        num_actions = edge_attr.size(0) + 1
+        #num_actions = edge_attr.size(0) + 1
         #Create a diagonal mask to prevent removal of diagonal elements (required for ILU)
         diagonal_mask = edge_index[0] != edge_index[1]
         diagonal_mask = torch.cat([diagonal_mask, torch.tensor([True])])

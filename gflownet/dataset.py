@@ -77,7 +77,8 @@ class SparseMatrixDataset(Dataset):
             'starting_csr': ilu_csr,
             'original_matrix': orig_sparse_tensor,
             'original_csr': orig_csr,
-            'b_vector': b_vector
+            'b_vector': b_vector,
+            'filename': ilu_matrix_path
         }
 
 
@@ -136,6 +137,8 @@ def custom_collate(batch):
                 other_values[key] = torch.stack([item[key] for item in batch])
             elif isinstance(batch[0][key], (np.ndarray, csr_matrix, csc_matrix)):  # Check for SciPy csr_matrix and NumPy arrays
                 # Keep NumPy arrays and SciPy sparse matrices (e.g., ilu_csr and orig_csr) as-is
+                other_values[key] = batch[0][key]
+            elif isinstance(batch[0][key], str):
                 other_values[key] = batch[0][key]
             else:
                 # Keep as a list if not a tensor

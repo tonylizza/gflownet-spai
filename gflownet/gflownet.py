@@ -16,9 +16,12 @@ from .validate import solve_with_gmres
 from .utils import torch_sparse_to_csr, convert_sparse_idx_to_row_col
 from scipy.sparse import csr_matrix
 from scipy.sparse.linalg import gmres, LinearOperator, spilu
+import pandas as pd
+from datetime import datetime
+import csv
 
 class GFlowNet(pl.LightningModule):
-    def __init__(self, forward_policy, backward_policy, no_sampling_batch = 32, lr = .00002):
+    def __init__(self, forward_policy, backward_policy, no_sampling_batch = 32, lr = .00002, schedule_patience=5):
         super().__init__()
         #self.total_flow = Parameter(torch.ones(1))
         self.automatic_optimization = False
@@ -28,6 +31,7 @@ class GFlowNet(pl.LightningModule):
         self.no_sampling_batch = no_sampling_batch
         self.padding_value = 1e-9
         self.lr = lr
+        self.schedule_patience = schedule_patience
     
     def forward(self, batch):
         trajectories = []
@@ -55,7 +59,7 @@ class GFlowNet(pl.LightningModule):
                 sampling = sampling + 1
                 action_probs, flow, alpha = self.forward_policy(current_state, actions=trajectory)
                 #print(f"Flow Grad: {flow.requires_grad}")
-                #print(f"Action Probs {action_probs}")
+                #print(f"Action Probs {action_probs.shape}")
                 action_distribution = torch.distributions.Categorical(action_probs)
                 action = action_distribution.sample()
                 selected_action_prob = action_probs[:, action]
@@ -65,10 +69,12 @@ class GFlowNet(pl.LightningModule):
                 fwd_state_flow.append(flow)
                 alphas.append(alpha)
                 action_probs_list.append(action_probs)
+                #print(action_probs)
                 # Append action to the trajectory
 
                 # Check if the action is the termination action
                 if action == (action_probs.shape[-1] - 1):
+                    #print(f"action value: {action}")
                     terminated = True
 
 
@@ -198,7 +204,7 @@ class GFlowNet(pl.LightningModule):
             optimizer,
             mode='min',      # We want to minimize the loss
             factor=0.2,      # How much to reduce the learning rate by
-            patience=5,      # How many epochs to wait before reducing LR
+            patience=self.schedule_patience,      # How many epochs to wait before reducing LR
             verbose=True,    # Print a message when LR is reduced
         )
         
@@ -252,6 +258,7 @@ class GFlowNet(pl.LightningModule):
             self.logger.experiment.add_scalar('avg_sparse_time', aggregated_results['avg_sparse_time'], global_step=self.current_epoch)
 
         # If you are using other loggers (like WandB), you may need to adapt this accordingly
+        self.save_validation_results_to_csv(results[0])
         print(f"Logged validation results after training epoch {self.current_epoch}")
 
     def run_validation(self):
@@ -281,7 +288,9 @@ class GFlowNet(pl.LightningModule):
                     L_copy = ilu.L.copy().tocoo()
                     U_copy = ilu.U.copy().tocoo()
                     for i in sampled_trajectory:
-                        row, col = convert_sparse_idx_to_row_col(i, batch['matrix_sq_side'])
+                        row = batch['data'].edge_index[0][i]
+                        col = batch['data'].edge_index[1][i]
+                        #row, col = convert_sparse_idx_to_row_col(i, batch['matrix_sq_side'])
                         if row != col:
                             L_copy.data[(L_copy.row == row) & (L_copy.col == col)] = 0
                             U_copy.data[(U_copy.row == row) & (U_copy.col == col)] = 0
@@ -294,8 +303,15 @@ class GFlowNet(pl.LightningModule):
                     #sampled_M = decompose_ilu_and_create_linear_operator(sampled_csr)
                     _, _, sparse_iterations, sparse_time = solve_with_gmres(batch['original_csr'], batch['b_vector'], M=sampled_M, max_iters=batch['matrix_sq_side'])
                     print(f"GMRES sparse preconditioner")
+                    filename = batch['filename']
+                    num_non_zeros = batch['original_csr'].nnz
+                    trajectory_length = len(sampled_trajectory)
+
                     
                     batch_results.append({
+                        "filename": filename,
+                        "num_non_zeros": num_non_zeros,
+                        "trajectory_length": trajectory_length,
                         "original_iterations": original_iterations,
                         "original_time": original_time,
                         "ilu_iterations": ilu_iterations,
@@ -353,5 +369,32 @@ class GFlowNet(pl.LightningModule):
 
             if action == (action_probs.shape[-1] - 1):
                 terminated = True
+        termination_action_index = batch['data'].edge_attr.size(0)
+        trajectory = [int(action.item()) for action in trajectory if action != termination_action_index]
         return trajectory
 
+    def save_validation_results_to_csv(self, validation_results):
+        # Get current datetime for filename
+        current_time = datetime.now().strftime("%Y%m%d%H%M%S")
+        csv_filename = f'validation_results_{current_time}.csv'
+
+        # Define the header for the CSV
+        csv_header = [
+            'filename', 'num_non_zeros', 'trajectory_length',
+            'original_iterations', 'original_time',
+            'ilu_iterations', 'ilu_time',
+            'sparse_iterations', 'sparse_time'
+        ]
+
+        # Open the CSV file in write mode
+        with open(csv_filename, mode='w', newline='') as file:
+            writer = csv.DictWriter(file, fieldnames=csv_header)
+            
+            # Write the header
+            writer.writeheader()
+            
+            # Write the validation results to the CSV file
+            for result in validation_results:
+                writer.writerow(result)
+
+        print(f"Validation results saved to {csv_filename}")

@@ -6,8 +6,10 @@ import scipy.io
 import psutil
 import tracemalloc
 from scipy.sparse import csr_matrix, csc_matrix, triu, tril
-from scipy.sparse.linalg import gmres, LinearOperator, splu, spilu
+import scipy.sparse.linalg as spla
+from scipy.sparse.linalg import gmres, LinearOperator, splu, spilu, spsolve_triangular
 import numpy as np
+import time
 
 class SparseTensorManipulator:
     def __init__(self, sparse_tensor, state_dim):
@@ -563,18 +565,48 @@ def convert_sparse_idx_to_row_col(data_index: int, matrix_size: int) -> Tuple[in
 
 def custom_solve_with_modified_LU(x, L, U, perm_r=None, perm_c=None):
     """
-    Custom solver using modified L and U matrices.
+    Custom solver using modified L and U matrices and permutation vectors.
     """
+    n = x.shape[0]
+    
+    # Create permutation matrices Pr and Pc
     if perm_r is not None:
-        x = x[perm_r]
-
+        #Time At Start
+        start_time = time.time()
+        Pr = csc_matrix((np.ones(n), (perm_r, np.arange(n))), shape=(n, n))
+        create_pr_time = time.time() - start_time
+        #print(create_pr_time)
+        before_row_time = time.time()
+        x = Pr @ x  # Apply row permutation to the input vector
+        row_permutation_time = time.time() - before_row_time
+        #print("Row Permutation Time")
+        #print(row_permutation_time)
+    before_fwd_solve_time = time.time()
     # Forward substitution for L (Ly = x)
-    y = splu(L).solve(x)
-
+    #y = spla.spsolve(L, x)
+    y = spsolve_triangular(L, x, lower=True)
+    #print("Forward Substitution time")
+    fwd_solve_time = time.time() - before_fwd_solve_time
+    #print(fwd_solve_time)
+    before_back_solve_time = time.time()
     # Backward substitution for U (Uz = y)
-    z = splu(U).solve(y)
-
+    #z = spla.spsolve(U, y)
+    z = spsolve_triangular(U, y, lower=False)
+    back_solve_time = time.time() - before_back_solve_time
+    #print("Backward Solve Time")
+    #print(back_solve_time)
+    
+    
     if perm_c is not None:
-        z = z[np.argsort(perm_c)]
+        before_pc_time = time.time()
+        Pc = csc_matrix((np.ones(n), (np.arange(n), perm_c)), shape=(n, n))
+        pc_time = time.time() - before_pc_time
+        #print("Pc Time")
+        #print(pc_time)
+        before_z_time = time.time()
+        z = Pc @ z  # Apply column permutation to the output vector
+        z_time = time.time() - before_z_time
+        #print("Z Time")
+        #print(z_time)
 
     return z
