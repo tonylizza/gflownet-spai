@@ -1,3 +1,10 @@
-matplotlib==3.5.3
-torch==1.12.1
-tqdm==4.50.0
+numpy
+pandas
+plotly
+psutil
+pytorch_lightning
+scikit_learn
+scipy
+torch
+torch_geometric
+tqdm

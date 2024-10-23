@@ -51,9 +51,11 @@ class GFlowNet(pl.LightningModule):
             action_probs_list = []
             selected_fwd_actions = []
             current_state = batch['data']
+            #print(f"Num Actions: {current_state.edge_attr.size(0) + 1}")
             #print(f"Current State Size {current_state.edge_attr.size(0)}")
             terminated = False
-            sampling = 1
+            sampling = 0
+            max_samples = min(8000, current_state.edge_attr.size(0) // 2)
             while not terminated:
                 #print(f"Sampling: {sampling}")
                 sampling = sampling + 1
@@ -64,6 +66,7 @@ class GFlowNet(pl.LightningModule):
                 action = action_distribution.sample()
                 selected_action_prob = action_probs[:, action]
                 selected_fwd_actions.append(selected_action_prob)
+                #selected_action_prob.detach()
                 #print(f"Action {action}")
                 trajectory.append(action)
                 fwd_state_flow.append(flow)
@@ -73,17 +76,21 @@ class GFlowNet(pl.LightningModule):
                 # Append action to the trajectory
 
                 # Check if the action is the termination action
-                if action == (action_probs.shape[-1] - 1):
+                if action == (action_probs.shape[-1] - 1) or sampling >= max_samples:
                     #print(f"action value: {action}")
                     terminated = True
-
+                if sampling % 1000 == 0:
+                    log_memory_usage(f"Sampled {sampling} actions")
+                    print(len(action_probs_list))
 
             # 2. Use the trajectory to update the matrix and calculate the reward
             alpha = torch.stack(alphas).mean(dim=0)
-            reward = self.update_and_compute_reward(batch['data'], trajectory, batch['starting_matrix'], batch['starting_residual'], batch['starting_flops'], batch['matrix_sq_side'], alpha)
+            with torch.no_grad():
+                reward = self.update_and_compute_reward(batch['data'], trajectory, batch['starting_matrix'], batch['starting_residual'], batch['starting_flops'], batch['matrix_sq_side'], alpha)
             trajectories.append(torch.tensor(trajectory))
             selected_fwd_actions_list.append(torch.stack(selected_fwd_actions))
             fwd_state_flows.append(torch.stack(fwd_state_flow, dim=0))
+            print(reward)
             rewards.append(reward)
 
             # 3. Optionally, calculate the forward/backward probabilities (for trajectory balance loss)
@@ -124,7 +131,8 @@ class GFlowNet(pl.LightningModule):
 
         #print(f"Backward Probs Resize {backward_probs.shape}")
         padded_forward_probs = rnn_utils.pad_sequence(forward_probs, batch_first=True, padding_value=0)
-        #print(f"Padded Forward Probs {padded_forward_probs.shape}")
+        #padded_forward_probs.detach()
+        print(f"Padded Forward Probs {padded_forward_probs.shape}")
 
 
 

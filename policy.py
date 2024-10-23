@@ -34,7 +34,7 @@ class ForwardPolicy(BasePolicy):
     
     def forward(self, data: Data, actions: List[int]) -> Tuple[Tensor, Tensor]:
         #log_memory_usage("Before Defining Data")
-        #log_memory_usage("Before Setting Up Data")
+       #log_memory_usage("Before Setting Up Data")
         x, edge_index, edge_attr= data.x, data.edge_index, data.edge_attr
         #print(f"Before GATConv1 x : {x.shape}")
         #print(f"Before GATConv1 edge_index : {edge_index}")
@@ -59,6 +59,7 @@ class ForwardPolicy(BasePolicy):
         #log_memory_usage("Before Global Mean Pooling")
         x = global_mean_pool(x, batch=torch.zeros(x.size(0), dtype=torch.long))
         #print(f"X Global Mean shape {x.shape}")
+        #log_memory_usage("Before 2nd relu")
         state_potential = torch.relu(self.potential_head(x).squeeze(-1))
         #Compute state potential
         #print(f"State potential requires grad: {state_potential.requires_grad}")
@@ -69,6 +70,7 @@ class ForwardPolicy(BasePolicy):
         diagonal_mask = torch.cat([diagonal_mask, torch.tensor([True])])
 
         #print(f"Global Mean Pooling x dimensions: {x}")
+        #log_memory_usage("Before FC layer")
         x = self.fc(x)
         x = x[:, :num_actions]
         if isinstance(actions, list):
