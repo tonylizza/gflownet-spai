@@ -5,6 +5,11 @@ from typing import Tuple, List
 import scipy.io
 import psutil
 import tracemalloc
+from scipy.sparse import csr_matrix, csc_matrix, triu, tril
+import scipy.sparse.linalg as spla
+from scipy.sparse.linalg import gmres, LinearOperator, splu, spilu, spsolve_triangular
+import numpy as np
+import time
 
 class SparseTensorManipulator:
     def __init__(self, sparse_tensor, state_dim):
@@ -224,11 +229,45 @@ def concatenate_sparse_tensors(sparse_tensors, dim=0):
     concatenated_size[dim] = sum(size[dim] for size in sizes)
 
     return torch.sparse_coo_tensor(concatenated_indices, concatenated_values, size=concatenated_size)
+'''
+def trajectory_balance_loss(forward_flow, rewards, fwd_probs, back_probs):
+    eps = 1e-9  # Small epsilon to avoid log(0)
 
-def trajectory_balance_loss(total_flow, rewards, fwd_probs, back_probs):
+    # Log of probabilities for forward and backward policies
+    #print(forward_flow.requires_grad)
+    #print(f"Forward Flow Val {forward_flow}")
+    #print(fwd_probs.requires_grad)
+    #print(back_probs.requires_grad)
+    log_fwd_probs = torch.log(fwd_probs + eps)  # Shape: (batch_size, trajectory_length, 1, num_actions)
+    log_back_probs = torch.log(back_probs + eps)  # Same shape as log_fwd_probs
+    #forward_flow_sum = forward_flow.sum(dim=1)
+    #print(f"forward_flow_sum {forward_flow_sum.shape}")
+    # Sum the log probabilities along the action dimension (dim=-1)
+    log_fwd_probs_sum = log_fwd_probs.sum(dim=1)  # Shape: (batch_size, num_actions, 1)
+    log_back_probs_sum = log_back_probs.sum(dim=1)  # Same shape as log_fwd_probs_sum
+    #print(f"log_fwd_probs_sum {log_fwd_probs_sum.shape}")
+    #print(f"log_back_probs_sum {log_back_probs_sum.shape}")
+    # Sum log probabilities along the trajectory (dim=1)
+    #log_fwd_probs_total = log_fwd_probs_sum.squeeze(1)  # Shape: (batch_size,)
+    #log_back_probs_total = log_back_probs_sum.squeeze(1)  # Shape: (batch_size,)
+    #print(f"log_fwd_probs_total {log_fwd_probs_total.shape}")
+    #print(f"log_back_probs_total {log_back_probs_total.shape}")
+    
+    # Compute log-likelihoods
+    #log_lhs = torch.log(forward_flow + eps).sum(dim=1) + log_fwd_probs_sum  # Forward flow + forward probabilities sum
+    log_lhs = torch.log(forward_flow + eps).unsqueeze(-1) + log_fwd_probs_sum
+    log_rhs = torch.log(rewards.unsqueeze(-1) + eps) + log_back_probs_sum  # Rewards (backward flow) + backward probabilities sum
+    
+    # Compute the trajectory balance loss
+    loss = (log_lhs - log_rhs) ** 2
+    
+    return loss.mean()  # Return the mean loss over the batch
+'''
+
+def trajectory_balance_loss(rewards, fwd_probs, back_probs):
     """
     Computes the mean trajectory balance loss for a collection of samples. For
-    more information, see Bengio et al. (2022): https://arxiv.org/abs/2201.13259
+    more information, see Bengio et al. (2022):
     
     Args:
         total_flow: The estimated total flow used by the GFlowNet when drawing
@@ -245,10 +284,13 @@ def trajectory_balance_loss(total_flow, rewards, fwd_probs, back_probs):
     """
     eps = 1e-9  # Small epsilon to avoid log(0)
 
+    device = rewards.device
+
     # Ensure all tensors are in the same device and dtype
-    total_flow = total_flow.to(fwd_probs.device).to(fwd_probs.dtype)
-    rewards = rewards.to(fwd_probs.device).to(fwd_probs.dtype)
-    back_probs = back_probs.to(fwd_probs.device).to(fwd_probs.dtype)
+    #total_flow = total_flow.to(fwd_probs.dtype)
+    rewards = rewards.to(device=device, dtype=fwd_probs.dtype)
+    fwd_probs = fwd_probs.to(device=device, dtype=fwd_probs.dtype)
+    back_probs = back_probs.to(device=device, dtype=fwd_probs.dtype)
 
     # Calculate the forward log probabilities
     log_fwd_probs = torch.log(fwd_probs + eps)  # Adding a small value to avoid log(0)
@@ -259,6 +301,7 @@ def trajectory_balance_loss(total_flow, rewards, fwd_probs, back_probs):
     # Sum log probabilities along the trajectory
     log_fwd_probs_sum = log_fwd_probs.sum(dim=-1)
     log_back_probs_sum = log_back_probs.sum(dim=-1)
+    #print(f"Log Back Shape {log_back_probs_sum.shape}")
     
     # Use log-sum-exp trick for numerical stability
     max_log_fwd = log_fwd_probs_sum.max(dim=0, keepdim=True)[0]
@@ -269,13 +312,15 @@ def trajectory_balance_loss(total_flow, rewards, fwd_probs, back_probs):
     normalized_log_back = log_back_probs_sum - max_log_back
     
     # Compute lhs and rhs in the log domain
-    log_lhs = torch.log(total_flow + eps) + normalized_log_fwd
-    log_rhs = torch.log(rewards + eps) + normalized_log_back
+    log_lhs = normalized_log_fwd
+    log_rhs = torch.log(rewards.unsqueeze(-1) + eps) + normalized_log_back
     
     # Compute the trajectory balance loss
     loss = (log_lhs - log_rhs)**2
     
     return loss.mean()
+
+
 
 def log_memory_usage(stage: str):
     process = psutil.Process()
@@ -354,3 +399,218 @@ def update_edges_and_convert_to_sparse(data: Data, actions: List[Tensor], matrix
    #print(f"Sparse Tensor non-zeros {sparse_tensor._nnz()}")
 
     return sparse_tensor
+
+def matrix_flops(matrix: Tensor) -> Tuple[int, int]:
+    if matrix.is_sparse:
+        # For sparse tensors, the number of non-zero elements is the size of the values tensor
+        non_zeros = matrix._values().numel()
+        flops = non_zeros * matrix.shape[1] * 2
+    else:
+        # We should be working exclusively with sparse tensors, so maybe replace this if/else statement with an assert. 
+        non_zeros = torch.nonzero(matrix).size(0)
+        flops = 2 * non_zeros        
+    return flops, non_zeros
+
+def calculate_residual(updated_matrix: Tensor, original_matrix: Tensor) -> Tensor:
+    #Calculate residual term, moving to its own method because we only want to calculate ||A*A-I|| once
+    # Residual term: ||M*A - I||
+    i = torch.arange(0, original_matrix.size(0))
+    i = torch.stack([i, i])
+    v = torch.ones(original_matrix.size(0), dtype=torch.float64)
+    sparse_identity = torch.sparse_coo_tensor(i, v, (original_matrix.size(0), original_matrix.size(0)))
+    product = torch.mm(updated_matrix, original_matrix)
+    sparse_identity = sparse_identity.to(product.device)
+    #print(f"Product {product}")
+    residual = torch.norm(product - sparse_identity)
+    #print(f"residual {residual}")
+
+    return residual
+
+def evaluate_preconditioner(updated_matrix: Tensor, original_matrix: Tensor, orig_residual: float, orig_flops: int, alpha: float) -> float:
+
+    
+    # Compute the computational cost (floating point operations - FLOPs)
+    # For simplicity, we can assume 2 FLOPs for each non-zero element (one for multiplication and one for addition)
+    # in the original matrix when multiplied by the preconditioner
+    # Assuming 'matrix' is the sparse matrix
+    
+    residual = calculate_residual(updated_matrix, original_matrix)
+    #print(f"Updated Matrix Flops Shape: {updated_matrix.shape}")
+    #print(f"Updated Matrix NNZ {updated_matrix._nnz()}")
+    flops, non_zeros = matrix_flops(updated_matrix)
+    
+    # Performance metric
+    #inverse_residual = 1 / torch.log((1 + residual))
+    #Modified so that residual is the denominator as it is expected to grow. We may need to change this.
+    #residual_ratio = orig_residual / residual if residual != 0 else float('inf')
+    residual_ratio = residual / orig_residual if orig_residual != 0 else float('inf')
+    #print(f"Residual for Updated Matrix {residual}")
+    #print(f"Original Residual: {orig_residual}")
+    #print(f"residual_ratio {residual_ratio}")
+    computational_ratio = flops / orig_flops if orig_flops != 0 else float('inf')
+    #print(f"No. flops for Updated Matrix {flops}")
+    #print(f"No. Flops Original Matrix {orig_flops}")
+    #print(f"computational_ratio: {computational_ratio}")
+    
+    performance_metric = alpha * (1 - residual_ratio) + (1 - alpha) * (1 - computational_ratio)
+    #print(f"performance metric {performance_metric}")
+    return performance_metric
+
+def calculate_reward(starting_matrix, updated_matrix, orig_residual, orig_flops, traj_length: int, alpha: float) -> float:
+    # Use the current matrix as a preconditioner and calculate the reward
+    # based on its performance (e.g., reduced iterations, improved stability)
+    #Need to figure out a way to penalize a trajectory to avoid the model picking a blank matrix. For now, dividing by log length of trajectory, but will need to come up with something.
+    #print(f"Reward Method before Traj Length: {reward}")
+    # Compute the computational cost (floating point operations - FLOPs)
+    # For simplicity, we can assume 2 FLOPs for each non-zero element (one for multiplication and one for addition)
+    # in the original matrix when multiplied by the preconditioner
+    # Assuming 'matrix' is the sparse matrix
+    #print(f"SM Type {type(starting_matrix)}")
+    residual = calculate_residual(updated_matrix, starting_matrix)
+    #print(f"Updated Matrix Flops Shape: {updated_matrix.shape}")
+    #print(f"Updated Matrix NNZ {updated_matrix._nnz()}")
+    flops, non_zeros = matrix_flops(updated_matrix)
+    
+    # Performance metric
+    #inverse_residual = 1 / torch.log((1 + residual))
+    #Modified so that residual is the denominator as it is expected to grow. We may need to change this.
+    #residual_ratio = orig_residual / residual if residual != 0 else float('inf')
+    residual_ratio = residual / orig_residual if orig_residual != 0 else float('inf')
+    #print(f"Residual for Updated Matrix {residual}")
+    #print(f"Original Residual: {orig_residual}")
+    #print(f"residual_ratio {residual_ratio}")
+    computational_ratio = flops / orig_flops if orig_flops != 0 else float('inf')
+    #print(f"No. flops for Updated Matrix {flops}")
+    #print(f"No. Flops Original Matrix {orig_flops}")
+    #print(f"computational_ratio: {computational_ratio}")
+    
+    reward = alpha * (1 - residual_ratio) + (1 - alpha) * (1 - computational_ratio)
+    #reward = reward/torch.log(torch.tensor(traj_length, dtype=torch.float64))
+    #reward = (reward/torch.tensor(traj_length, dtype=torch.float64)) * 100
+    reward = reward.to(torch.float64) * 1000
+    #print(f"Reward Method after Traj Length: {reward}")
+    return reward
+
+import torch
+from scipy.sparse import csr_matrix
+
+def torch_sparse_to_csr(sparse_tensor: torch.sparse.FloatTensor, matrix_size: int) -> csr_matrix:
+    """
+    Converts a PyTorch sparse tensor to a SciPy csr_matrix.
+    
+    Args:
+        sparse_tensor (torch.sparse.FloatTensor): The PyTorch sparse tensor (coo format).
+        matrix_size (int): The size of the matrix (assumed to be square: matrix_size * matrix_size).
+        
+    Returns:
+        csr_matrix: The resulting SciPy CSR matrix.
+    """
+    # Ensure the tensor is in COO format (should be coalesced)
+    sparse_tensor = sparse_tensor.double()
+    sparse_tensor = sparse_tensor.coalesce()
+
+    # Extract the indices (non-zero locations) and values from the PyTorch sparse tensor
+    indices = sparse_tensor.indices()  # Shape: [2, num_nonzero_entries]
+    values = sparse_tensor.values()  # Shape: [num_nonzero_entries]
+
+    # Extract row and column indices
+    flattened_indices = indices[1]  # We used flattened indices in the original tensor creation
+    
+    # Convert flattened indices back to row and column indices
+    row_indices = flattened_indices // matrix_size
+    col_indices = flattened_indices % matrix_size
+
+    # Convert PyTorch tensors to NumPy arrays for use in SciPy
+    row_indices = row_indices.numpy()
+    col_indices = col_indices.numpy()
+    values = values.numpy()
+
+    # Create the SciPy csr_matrix
+    csr = csr_matrix((values, (row_indices, col_indices)), shape=(matrix_size, matrix_size))
+
+    return csr
+
+def decompose_ilu_and_create_linear_operator(ilu_matrix):
+    # Extract the lower triangular part (including the diagonal) as L
+
+    ilu_matrix = ilu_matrix.tocsc()
+    L = tril(ilu_matrix, k=-1) + csc_matrix(np.eye(ilu_matrix.shape[0]))
+
+    #L = L.tocsc()
+
+    # Extract the upper triangular part (including the diagonal), but we will subtract the identity matrix later
+    U = triu(ilu_matrix, format='csc')
+
+
+    M = LinearOperator(shape=L.shape, matvec=lambda x: apply_ilu_preconditioner(x, L, U))
+
+
+    return M
+
+def apply_ilu_preconditioner(x, L, U):
+    # Solve L (Ly = x) for y, using forward substitution
+    y = spilu(L).solve(x)
+    
+    # Solve U (Uz = y) for z, using backward substitution
+    z = spilu(U).solve(y)
+    
+    return z
+
+
+def convert_sparse_idx_to_row_col(data_index: int, matrix_size: int) -> Tuple[int, int]:
+    row_index = data_index // matrix_size
+    col_index = data_index % matrix_size
+
+    # Convert PyTorch tensors to NumPy arrays for use in SciPy
+    row = row_index.numpy()
+    col = col_index.numpy()
+
+    return row, col
+
+def custom_solve_with_modified_LU(x, L, U, perm_r=None, perm_c=None):
+    """
+    Custom solver using modified L and U matrices and permutation vectors.
+    """
+    n = x.shape[0]
+    
+    # Create permutation matrices Pr and Pc
+    if perm_r is not None:
+        #Time At Start
+        start_time = time.time()
+        Pr = csc_matrix((np.ones(n), (perm_r, np.arange(n))), shape=(n, n))
+        create_pr_time = time.time() - start_time
+        #print(create_pr_time)
+        before_row_time = time.time()
+        x = Pr @ x  # Apply row permutation to the input vector
+        row_permutation_time = time.time() - before_row_time
+        #print("Row Permutation Time")
+        #print(row_permutation_time)
+    before_fwd_solve_time = time.time()
+    # Forward substitution for L (Ly = x)
+    #y = spla.spsolve(L, x)
+    y = spsolve_triangular(L, x, lower=True)
+    #print("Forward Substitution time")
+    fwd_solve_time = time.time() - before_fwd_solve_time
+    #print(fwd_solve_time)
+    before_back_solve_time = time.time()
+    # Backward substitution for U (Uz = y)
+    #z = spla.spsolve(U, y)
+    z = spsolve_triangular(U, y, lower=False)
+    back_solve_time = time.time() - before_back_solve_time
+    #print("Backward Solve Time")
+    #print(back_solve_time)
+    
+    
+    if perm_c is not None:
+        before_pc_time = time.time()
+        Pc = csc_matrix((np.ones(n), (np.arange(n), perm_c)), shape=(n, n))
+        pc_time = time.time() - before_pc_time
+        #print("Pc Time")
+        #print(pc_time)
+        before_z_time = time.time()
+        z = Pc @ z  # Apply column permutation to the output vector
+        z_time = time.time() - before_z_time
+        #print("Z Time")
+        #print(z_time)
+
+    return z
