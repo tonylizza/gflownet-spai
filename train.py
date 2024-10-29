@@ -11,7 +11,7 @@ from gflownet.dataset import MatrixDataModule
 
 
 def run_experiment(hyperparams):
-    matrix_dir = 'data/large_ILU'
+    matrix_dir = 'data/medium_ILU'
     data_module = MatrixDataModule(matrix_directory=matrix_dir, batch_size=1)
 
     forward_policy = ForwardPolicy(node_features=hyperparams['node_features'], hidden_dim=hyperparams['hidden_dim'], max_num_actions=hyperparams['max_num_actions'])
@@ -32,8 +32,8 @@ def run_experiment(hyperparams):
 if __name__ == '__main__':
     # Define hyperparameters space
     learning_rates = [2e-4, 7e-5, 2e-5]
-    number_epochs = [2, 3] #Change to 50, 100 after testing
-    no_sampling_batches = [2, 8, 16] #Change to 4, 8, 16 after testing
+    number_epochs = [50, 100] #Change to 50, 100 after testing
+    no_sampling_batches = [2] #Change to 4, 8, 16 after testing
     schedule_patience = [5, 10] 
 
     # Create hyperparameter combinations
@@ -45,10 +45,10 @@ if __name__ == '__main__':
             'lr': lr,
             'number_epoch': number_epoch,
             'no_sampling_batch': no_sampling_batch,
-            'hidden_dim': 4,
+            'hidden_dim': 2,
             'node_features': -1,
             'input_dim': 1,
-            'max_num_actions': 18000000,
+            'max_num_actions': 180000,
             'schedule_patience': patience
         }
         run_experiment(hyperparams)

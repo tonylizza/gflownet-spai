@@ -3,11 +3,12 @@ from torch import nn, Tensor
 from torch.nn.functional import relu
 from torch.nn.functional import softmax
 from torch_geometric.data import Data
-from torch_geometric.nn import GATv2Conv, global_mean_pool
+from torch_geometric.nn import GATv2Conv, GATConv, global_mean_pool
 from gflownet.utils import log_memory_usage
 import torch.nn.functional as F
 import gc
 from typing import List
+import torch.autograd.profiler as profiler
 
 from typing import Tuple
 
@@ -16,7 +17,7 @@ class BasePolicy(nn.Module):
         super(BasePolicy, self).__init__()
         self.node_features = node_features
         self.hid = hidden_dim
-        self.in_head = 4
+        self.in_head = 2
         self.out_head = 1
         self.gat1 = GATv2Conv(node_features, self.hid, edge_dim=1, heads=self.in_head)
 
@@ -34,7 +35,7 @@ class ForwardPolicy(BasePolicy):
     
     def forward(self, data: Data, actions: List[int]) -> Tuple[Tensor, Tensor]:
         #log_memory_usage("Before Defining Data")
-       #log_memory_usage("Before Setting Up Data")
+        #log_memory_usage("Before Setting Up Data")
         x, edge_index, edge_attr= data.x, data.edge_index, data.edge_attr
         #print(f"Before GATConv1 x : {x.shape}")
         #print(f"Before GATConv1 edge_index : {edge_index}")
@@ -46,20 +47,25 @@ class ForwardPolicy(BasePolicy):
         #self.gat2 = GATv2Conv(self.hid * self.in_head, num_actions, edge_dim=1, heads=self.out_head).to(x.device)
         
         #print(f"GAT Layer Weights: {self.gat1.lin_l.weight}")
+        #log_memory_usage("Before GAT1")
+        x = self.gat1(x, edge_index, edge_attr)
         #log_memory_usage("Before 1st Relu")
-        x = torch.relu(self.gat1(x, edge_index, edge_attr))
+        #x = torch.relu_(self.gat1(x, edge_index, edge_attr))
+        x = torch.relu_(x)
+        #gc.collect()
         #print(f"After GATConv1 x dimensions: {x.shape}")
         #print(f"GAT1 value before Relu: {self.gat1(x, edge_index, edge_attr)}")
         #print(f"After ReLu GATConv1 x dimensions: {x.dtype}")
         #log_memory_usage("Before 2nd Relu")
         
-        x = torch.relu(self.gat2(x, edge_index, edge_attr))
+        x = torch.relu_(self.gat2(x, edge_index, edge_attr))
         #print(f"After GATConv2 x dimensions: {x.shape}")
         # Apply global mean pooling to aggregate node features
         #log_memory_usage("Before Global Mean Pooling")
-        x = global_mean_pool(x, batch=torch.zeros(x.size(0), dtype=torch.long))
+        x = global_mean_pool(x, batch=torch.zeros(x.size(0), dtype=torch.long, device=x.device))
+        #gc.collect()
         #print(f"X Global Mean shape {x.shape}")
-        #log_memory_usage("Before 2nd relu")
+        #log_memory_usage("Before State Potential relu")
         state_potential = torch.relu(self.potential_head(x).squeeze(-1))
         #Compute state potential
         #print(f"State potential requires grad: {state_potential.requires_grad}")
@@ -67,7 +73,7 @@ class ForwardPolicy(BasePolicy):
         #num_actions = edge_attr.size(0) + 1
         #Create a diagonal mask to prevent removal of diagonal elements (required for ILU)
         diagonal_mask = edge_index[0] != edge_index[1]
-        diagonal_mask = torch.cat([diagonal_mask, torch.tensor([True])])
+        diagonal_mask = torch.cat([diagonal_mask, torch.tensor([True], device=diagonal_mask.device)])
 
         #print(f"Global Mean Pooling x dimensions: {x}")
         #log_memory_usage("Before FC layer")
@@ -115,21 +121,26 @@ class BackwardPolicy(nn.Module):
         - valid_actions_list: A list where each element is a list of valid action indices for that sample
         - termination_action_index: The index corresponding to the termination action
         """
+        device = trajectories.device
+        self.lstm.to(device)
+        self.fc.to(device)
+        self.potential_head.to(device)
+
         batch_size, max_len = trajectories.size()
 
         # Create a mask for valid positions (non-padded)
-        valid_seq_mask = (trajectories != -1)  # Shape: (batch_size, max_len)
+        valid_seq_mask = (trajectories != -1).to(device)  # Shape: (batch_size, max_len)
 
         # Compute lengths of sequences
         sequence_lengths = valid_seq_mask.sum(dim=1).long()  # Shape: (batch_size)
 
         # Prepare inputs for the LSTM
-        inputs = trajectories.float().unsqueeze(-1)  # Shape: (batch_size, max_len, 1)
+        inputs = trajectories.float().unsqueeze(-1).to(device)  # Shape: (batch_size, max_len, 1)
 
         # Pack the sequences for the LSTM
         packed_input = nn.utils.rnn.pack_padded_sequence(
             inputs,
-            sequence_lengths.cpu(),  # Ensure lengths are on CPU
+            sequence_lengths,  # Ensure lengths are on CPU
             batch_first=True,
             enforce_sorted=False
         )
@@ -154,10 +165,10 @@ class BackwardPolicy(nn.Module):
         logits = logits[:, :, :termination_action_index]  # Shape: (batch_size, max_len, termination_action_index)
 
         # Initialize action masks to zeros (this mask will have the same size as the logits)
-        action_masks = torch.zeros(batch_size, max_len, termination_action_index)
+        action_masks = torch.zeros(batch_size, max_len, termination_action_index, device=device)
 
         # For padded positions, only the termination action is valid
-        padded_positions = (trajectories == -1)  # Shape: (batch_size, max_len)
+        padded_positions = (trajectories == -1).to(trajectories.device)  # Shape: (batch_size, max_len)
         padded_positions_indices = padded_positions.nonzero(as_tuple=False)  # Shape: (num_padded_positions, 2)
 
         if padded_positions_indices.numel() > 0:
@@ -172,7 +183,7 @@ class BackwardPolicy(nn.Module):
             
             # Ensure the sample_mask has the right size to accommodate the termination action
             sample_mask_size = termination_action_index  
-            sample_mask = torch.zeros(sample_mask_size)  # Mask is of size 209 to accommodate index 208
+            sample_mask = torch.zeros(sample_mask_size, device=device)  # Mask is of size 209 to accommodate index 208
 
             # Now we can safely index into sample_mask with valid_actions
             sample_mask[valid_actions] = 1  # Set valid actions to 1

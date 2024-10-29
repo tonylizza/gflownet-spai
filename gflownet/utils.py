@@ -284,10 +284,13 @@ def trajectory_balance_loss(rewards, fwd_probs, back_probs):
     """
     eps = 1e-9  # Small epsilon to avoid log(0)
 
+    device = rewards.device
+
     # Ensure all tensors are in the same device and dtype
     #total_flow = total_flow.to(fwd_probs.dtype)
-    rewards = rewards.to(fwd_probs.dtype)
-    back_probs = back_probs.to(fwd_probs.dtype)
+    rewards = rewards.to(device=device, dtype=fwd_probs.dtype)
+    fwd_probs = fwd_probs.to(device=device, dtype=fwd_probs.dtype)
+    back_probs = back_probs.to(device=device, dtype=fwd_probs.dtype)
 
     # Calculate the forward log probabilities
     log_fwd_probs = torch.log(fwd_probs + eps)  # Adding a small value to avoid log(0)
@@ -416,6 +419,7 @@ def calculate_residual(updated_matrix: Tensor, original_matrix: Tensor) -> Tenso
     v = torch.ones(original_matrix.size(0), dtype=torch.float64)
     sparse_identity = torch.sparse_coo_tensor(i, v, (original_matrix.size(0), original_matrix.size(0)))
     product = torch.mm(updated_matrix, original_matrix)
+    sparse_identity = sparse_identity.to(product.device)
     #print(f"Product {product}")
     residual = torch.norm(product - sparse_identity)
     #print(f"residual {residual}")

@@ -8,3 +8,5 @@ scipy
 torch
 torch_geometric
 tqdm
+tensorboard
+tensorboardX

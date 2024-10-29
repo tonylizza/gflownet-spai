@@ -55,7 +55,7 @@ class GFlowNet(pl.LightningModule):
             #print(f"Current State Size {current_state.edge_attr.size(0)}")
             terminated = False
             sampling = 0
-            max_samples = min(8000, current_state.edge_attr.size(0) // 2)
+            max_samples = min(8000, current_state.edge_attr.size(0) // 4)
             while not terminated:
                 #print(f"Sampling: {sampling}")
                 sampling = sampling + 1
@@ -71,7 +71,7 @@ class GFlowNet(pl.LightningModule):
                 trajectory.append(action)
                 fwd_state_flow.append(flow)
                 alphas.append(alpha)
-                action_probs_list.append(action_probs)
+                #action_probs_list.append(action_probs)
                 #print(action_probs)
                 # Append action to the trajectory
 
@@ -81,7 +81,7 @@ class GFlowNet(pl.LightningModule):
                     terminated = True
                 if sampling % 1000 == 0:
                     log_memory_usage(f"Sampled {sampling} actions")
-                    print(len(action_probs_list))
+                    #print(len(action_probs_list))
 
             # 2. Use the trajectory to update the matrix and calculate the reward
             alpha = torch.stack(alphas).mean(dim=0)
@@ -90,11 +90,11 @@ class GFlowNet(pl.LightningModule):
             trajectories.append(torch.tensor(trajectory))
             selected_fwd_actions_list.append(torch.stack(selected_fwd_actions))
             fwd_state_flows.append(torch.stack(fwd_state_flow, dim=0))
-            print(reward)
+            log_memory_usage('Finished Sample')
             rewards.append(reward)
 
             # 3. Optionally, calculate the forward/backward probabilities (for trajectory balance loss)
-            forward_probs.append(torch.stack(action_probs_list))
+            #forward_probs.append(torch.stack(action_probs_list))
 
         padded_trajectories = rnn_utils.pad_sequence(trajectories, batch_first=True, padding_value=-1)
         selected_fwd_actions_list = [torch.tensor(action) if not isinstance(action, torch.Tensor) else action for action in selected_fwd_actions_list]
@@ -130,16 +130,16 @@ class GFlowNet(pl.LightningModule):
         # selected_back_probs will now be of shape [number_batch, max_trajectory_length, 1] containing the probabilities for the selected actions
 
         #print(f"Backward Probs Resize {backward_probs.shape}")
-        padded_forward_probs = rnn_utils.pad_sequence(forward_probs, batch_first=True, padding_value=0)
+        #padded_forward_probs = rnn_utils.pad_sequence(forward_probs, batch_first=True, padding_value=0)
         #padded_forward_probs.detach()
-        print(f"Padded Forward Probs {padded_forward_probs.shape}")
+        #print(f"Padded Forward Probs {padded_forward_probs.shape}")
 
 
 
         return {
             "trajectories": trajectories,
             "rewards": torch.tensor(rewards),
-            "forward_probs": padded_forward_probs,
+            #"forward_probs": padded_forward_probs,
             "backward_probs": backward_probs,
             "padded_forward_flows": padded_forward_flows,
             "padded_selected_fwds": padded_selected_fwds,
@@ -154,38 +154,45 @@ class GFlowNet(pl.LightningModule):
         # Extract the necessary components from the forward pass
         trajectories = output["trajectories"]
         rewards = output["rewards"]
-        forward_probs = output["forward_probs"]
-        backward_probs = output["backward_probs"]
+        #forward_probs = output["forward_probs"]
+        #backward_probs = output["backward_probs"]
         selected_fwd_probs = output['padded_selected_fwds']
         selected_back_probs = output['selected_back_probs']
         #print(f"Selected Fwd Probs Grad {selected_fwd_probs.shape}")
         #print(f"Selected Back Probs Grad {selected_back_probs.shape}")
         #print(f"Rewards {rewards}")
-        padded_forward_flows = output["padded_forward_flows"]
+        #padded_forward_flows = output["padded_forward_flows"]
         #print(f"Forward Probs Shape {forward_probs}")
         #print(f"Back Probs Shape {backward_probs}")
-        avg_reward = rewards.mean()
+        avg_reward = rewards.mean().item()
 
         # Compute the loss based on trajectory balance (or another loss function)
+        
         loss = trajectory_balance_loss(rewards, selected_fwd_probs, selected_back_probs)
-        print(f"Loss: {loss}")
+        print(f"Loss: {loss.item()}")
 
-        reward_per_loss = avg_reward/loss
+        reward_per_loss = (avg_reward/loss).item()
         self.log('avg_reward', avg_reward, on_epoch=True)
         # Log the loss and return it
-        self.log('train_loss', loss, on_step=True, on_epoch=True)
+        self.log('train_loss', loss.item(), on_step=True, on_epoch=True)
         self.log('reward_per_loss', reward_per_loss, on_epoch=True)
 
-            # Perform backward pass
+        # Perform backward pass
+        optimizer = self.optimizers()
+        optimizer.zero_grad()
         self.manual_backward(loss)
+        optimizer.step()
+
     
         #self.check_gradients()
 
         # Log the action distribution (histogram of probabilities)
-        for i, probs in enumerate(forward_probs):
-            self.logger.experiment.add_histogram(f'action_distribution_{i}', probs, self.current_epoch)
+        for i, probs in enumerate(selected_fwd_probs):
+            self.logger.experiment.add_histogram(f'action_distribution_{i}', probs.detach(), self.current_epoch)
 
-        return loss
+        del output, loss
+        gc.collect()
+        #return loss
 
 
     
@@ -243,10 +250,15 @@ class GFlowNet(pl.LightningModule):
         if len(grads) > 0:
             # Compute the gradient norm if there are valid gradients
             grad_norm = torch.norm(torch.stack([torch.norm(g, 2) for g in grads]))
+            grad_norm = grad_norm.item()
             self.log('grad_norm', grad_norm)
+            del grad_norm
         else:
             # Optionally, log a warning or handle the case where no gradients are available
             self.log('grad_norm', torch.tensor(0.0))
+
+        del grads
+        gc.collect()
 
     def on_train_end(self):
         """
