@@ -335,7 +335,7 @@ class GFlowNet(pl.LightningModule):
                     _, _, sparse_iterations, sparse_time = solve_with_gmres(batch['original_csr'], batch['b_vector'], M=sampled_M, max_iters=batch['matrix_sq_side'])
                     print(f"GMRES sparse preconditioner")
                     filename = batch['filename']
-                    num_non_zeros = batch['starting_matrix']._values().numel()
+                    num_non_zeros = batch['ilu_sparse_tensor']._values().numel()
                     trajectory_length = len(sampled_trajectory)
 
                     
