@@ -50,8 +50,7 @@ class SparseMatrixDataset(Dataset):
 
         matrix_sq_side = ilu_sparse_tensor.size(0)
 
-        starting_flops, _ = matrix_flops(ilu_sparse_tensor)
-        starting_residual = calculate_residual(ilu_sparse_tensor, ilu_sparse_tensor)
+        
 
         # Load original matrix for evaluation (if necessary)
         orig_matrix = mmread(self.orig_matrix_paths[idx]).tocoo()
@@ -61,7 +60,8 @@ class SparseMatrixDataset(Dataset):
             torch.tensor(orig_matrix.data, dtype=torch.float32),
             orig_matrix.shape
         )
-
+        starting_flops, _ = matrix_flops(ilu_sparse_tensor)
+        starting_residual = calculate_residual(ilu_sparse_tensor, orig_sparse_tensor)
         # Load 'b' vector for evaluation
         b_vector = None
         if self.load_b:
@@ -83,11 +83,12 @@ class SparseMatrixDataset(Dataset):
 
 
 class MatrixDataModule(pl.LightningDataModule):
-    def __init__(self, matrix_directory, batch_size=1, load_b=True):
+    def __init__(self, matrix_directory, num_workers=0, batch_size=1, load_b=True):
         super().__init__()
         self.matrix_directory = matrix_directory
         self.batch_size = batch_size
         self.load_b = load_b
+        self.num_workers = num_workers
 
     def setup(self, stage=None):
         # Get all filenames (without extensions) in the directory
@@ -98,8 +99,8 @@ class MatrixDataModule(pl.LightningDataModule):
         self.orig_matrix_paths = [os.path.join(self.matrix_directory, 'matrices', f"{filename}.mtx") for filename in filenames]
         self.b_vector_paths = [os.path.join(self.matrix_directory, 'b_vectors', f"{filename}_b.mtx") for filename in filenames]
 
-        # Split into training and validation sets (80/20 split)
-        split_index = int(0.8 * len(self.ilu_paths))
+        # Split into training and validation sets (50/50 split)
+        split_index = int(0.5 * len(self.ilu_paths))
         self.train_ilu_paths = self.ilu_paths[:split_index]
         self.val_ilu_paths = self.ilu_paths[split_index:]
         self.train_orig_paths = self.orig_matrix_paths[:split_index]
@@ -110,12 +111,12 @@ class MatrixDataModule(pl.LightningDataModule):
     def train_dataloader(self):
         # Create dataset and dataloader for training
         train_dataset = SparseMatrixDataset(self.train_ilu_paths, self.train_orig_paths, self.train_b_paths, load_b=False)
-        return DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, collate_fn=custom_collate)
+        return DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, collate_fn=custom_collate, num_workers=self.num_workers)
 
     def val_dataloader(self):
         # Create dataset and dataloader for validation
         val_dataset = SparseMatrixDataset(self.val_ilu_paths, self.val_orig_paths, self.val_b_paths, load_b=self.load_b)
-        return DataLoader(val_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=custom_collate)
+        return DataLoader(val_dataset, batch_size=self.batch_size, shuffle=False, collate_fn=custom_collate, num_workers=self.num_workers)
 
 
 def custom_collate(batch):

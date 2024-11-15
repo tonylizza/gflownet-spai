@@ -29,7 +29,8 @@ class ForwardPolicy(BasePolicy):
         #log_memory_usage("Before Defining GAT2")
         self.gat2 = GATv2Conv(self.hid * self.in_head, self.hid, edge_dim=1, heads=self.out_head)
         self.fc = nn.Linear(self.hid, max_num_actions)
-        self.potential_head = nn.Linear(self.hid, 1)
+        self.state_potential = nn.Parameter(torch.tensor(1.0))
+        #self.potential_head = nn.Linear(self.hid, 1)
         #Set up FC layer for alpha
         self.alpha = torch.nn.Parameter(torch.tensor(0.0))  # Starts with equal weighting for reward function mixing parameter
     
@@ -66,7 +67,8 @@ class ForwardPolicy(BasePolicy):
         #gc.collect()
         #print(f"X Global Mean shape {x.shape}")
         #log_memory_usage("Before State Potential relu")
-        state_potential = torch.relu(self.potential_head(x).squeeze(-1))
+        transformed_state_potential = torch.relu(self.state_potential)
+        #print(f"Transformed state_potential requires_grad: {transformed_state_potential.requires_grad}")
         #Compute state potential
         #print(f"State potential requires grad: {state_potential.requires_grad}")
 
@@ -96,7 +98,7 @@ class ForwardPolicy(BasePolicy):
         #log_memory_usage("Before Softmax")
         alpha_processed = torch.sigmoid(self.alpha)
         gc.collect() 
-        return torch.softmax(x, dim=1), state_potential, alpha_processed
+        return torch.softmax(x, dim=1), transformed_state_potential, alpha_processed
     
 
 class BackwardPolicy(nn.Module):

@@ -5,7 +5,7 @@
 #SBATCH --gres=gpu:1                  # Request one GPU from the node
 #SBATCH --ntasks-per-node=1
 #SBATCH --job-name=GFLOWNET_ILU
-#SBATCH --time=50:00:00                # Wall clock time (HH:MM:SS) - once the job exceeds this time, the job will be terminated (default is 1 hour)
+#SBATCH --time=99:00:00                # Wall clock time (HH:MM:SS) - once the job exceeds this time, the job will be terminated (default is 1 hour)
 #SBATCH --array=0-81:9
 #SBATCH --partition=compute-gpu       # partition - use gpus
 #SBATCH --output=slurm-%A_%a.out

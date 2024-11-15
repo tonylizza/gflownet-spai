@@ -19,6 +19,7 @@ from scipy.sparse.linalg import gmres, LinearOperator, spilu
 import pandas as pd
 from datetime import datetime
 import csv
+import time
 
 class GFlowNet(pl.LightningModule):
     def __init__(self, forward_policy, backward_policy, no_sampling_batch = 32, lr = .00002, schedule_patience=5):
@@ -55,7 +56,7 @@ class GFlowNet(pl.LightningModule):
             #print(f"Current State Size {current_state.edge_attr.size(0)}")
             terminated = False
             sampling = 0
-            max_samples = min(8000, current_state.edge_attr.size(0) // 4)
+            max_samples = min(4000, current_state.edge_attr.size(0) // 4)
             while not terminated:
                 #print(f"Sampling: {sampling}")
                 sampling = sampling + 1
@@ -85,11 +86,14 @@ class GFlowNet(pl.LightningModule):
 
             # 2. Use the trajectory to update the matrix and calculate the reward
             alpha = torch.stack(alphas).mean(dim=0)
+            flows = torch.stack(fwd_state_flow).mean(dim=0)
+            #print(f"Mean Flow Grad: {flows.requires_grad}")
             with torch.no_grad():
-                reward = self.update_and_compute_reward(batch['data'], trajectory, batch['starting_matrix'], batch['starting_residual'], batch['starting_flops'], batch['matrix_sq_side'], alpha)
+                reward = self.update_and_compute_reward(batch['data'], trajectory, batch['original_matrix'], batch['starting_matrix'], batch['starting_residual'], batch['starting_flops'], batch['matrix_sq_side'], alpha)
             trajectories.append(torch.tensor(trajectory))
             selected_fwd_actions_list.append(torch.stack(selected_fwd_actions))
-            fwd_state_flows.append(torch.stack(fwd_state_flow, dim=0))
+            fwd_state_flows.append(flow)
+            reward = torch.clamp(reward, min=1e-8)
             log_memory_usage('Finished Sample')
             rewards.append(reward)
 
@@ -98,10 +102,11 @@ class GFlowNet(pl.LightningModule):
 
         padded_trajectories = rnn_utils.pad_sequence(trajectories, batch_first=True, padding_value=-1)
         selected_fwd_actions_list = [torch.tensor(action) if not isinstance(action, torch.Tensor) else action for action in selected_fwd_actions_list]
-        padded_forward_flows = rnn_utils.pad_sequence(fwd_state_flows, batch_first=True, padding_value=0.0)
+        #padded_forward_flows = rnn_utils.pad_sequence(fwd_state_flows, batch_first=True, padding_value=0.0)
         #print(f"Padded Forward Flows Grad: {padded_forward_flows.requires_grad}")
         padded_selected_fwds = rnn_utils.pad_sequence(selected_fwd_actions_list, batch_first=True, padding_value=0.0).squeeze(-1)    
         #backward_probs.append(self.backward_policy(padded_trajectories))  # Backward policy can depend on the trajectory
+        flow_stack = torch.stack(fwd_state_flows)
 
         valid_actions_list = []
         termination_action_index = batch['data'].edge_attr.size(0) + 1
@@ -141,7 +146,7 @@ class GFlowNet(pl.LightningModule):
             "rewards": torch.tensor(rewards),
             #"forward_probs": padded_forward_probs,
             "backward_probs": backward_probs,
-            "padded_forward_flows": padded_forward_flows,
+            "flows": flow_stack,
             "padded_selected_fwds": padded_selected_fwds,
             "selected_back_probs": selected_back_probs
         }
@@ -161,26 +166,27 @@ class GFlowNet(pl.LightningModule):
         #print(f"Selected Fwd Probs Grad {selected_fwd_probs.shape}")
         #print(f"Selected Back Probs Grad {selected_back_probs.shape}")
         #print(f"Rewards {rewards}")
-        #padded_forward_flows = output["padded_forward_flows"]
-        #print(f"Forward Probs Shape {forward_probs}")
+        flows = output["flows"]
+        #print(f"All Grad: {flows.requires_grad}")
         #print(f"Back Probs Shape {backward_probs}")
         avg_reward = rewards.mean().item()
 
         # Compute the loss based on trajectory balance (or another loss function)
         
-        loss = trajectory_balance_loss(rewards, selected_fwd_probs, selected_back_probs)
-        print(f"Loss: {loss.item()}")
+        loss = trajectory_balance_loss(flows, rewards, selected_fwd_probs, selected_back_probs)
+        #print(f"Loss: {loss.item()}")
 
         reward_per_loss = (avg_reward/loss).item()
         self.log('avg_reward', avg_reward, on_epoch=True)
         # Log the loss and return it
-        self.log('train_loss', loss.item(), on_step=True, on_epoch=True)
+        self.log('train_loss', loss.item(), on_epoch=True)
         self.log('reward_per_loss', reward_per_loss, on_epoch=True)
 
         # Perform backward pass
         optimizer = self.optimizers()
         optimizer.zero_grad()
         self.manual_backward(loss)
+        print(f"Flows grad: {flows.grad}")
         optimizer.step()
 
     
@@ -196,7 +202,7 @@ class GFlowNet(pl.LightningModule):
 
 
     
-    def update_and_compute_reward(self, data: Data, actions: List[int], starting_matrix, orig_residual: int, orig_flops: int, matrix_size: int, alpha: float) -> torch.Tensor:
+    def update_and_compute_reward(self, data: Data, actions: List[int], original_matrix, starting_matrix, orig_residual: int, orig_flops: int, matrix_size: int, alpha: float) -> torch.Tensor:
         batch_size = len(actions)
         rewards = []
 
@@ -204,7 +210,7 @@ class GFlowNet(pl.LightningModule):
 
         resized_matrix = resize_sparse_tensor(updated_matrix, (matrix_size, matrix_size))
             
-        reward = calculate_reward(starting_matrix, resized_matrix, orig_residual, orig_flops, len(actions), alpha)
+        reward = calculate_reward(original_matrix, starting_matrix, resized_matrix, orig_residual, orig_flops, len(actions), alpha)
         del updated_matrix
         del resized_matrix
         gc.collect()
@@ -304,16 +310,21 @@ class GFlowNet(pl.LightningModule):
                 print(f"GMRES orig preconditioner")
                 batch_results = []
                 for _ in range(10):
+                    start_time = time.time()
                     sampled_trajectory = self.sample_trajectory(batch)
+                    sample_time = time.time() - start_time
                     L_copy = ilu.L.copy().tocoo()
                     U_copy = ilu.U.copy().tocoo()
+                    device = torch.device("cuda:0")
                     for i in sampled_trajectory:
                         row = batch['data'].edge_index[0][i]
                         col = batch['data'].edge_index[1][i]
+                        row_np = row.cpu().numpy()
+                        col_np = col.cpu().numpy()
                         #row, col = convert_sparse_idx_to_row_col(i, batch['matrix_sq_side'])
                         if row != col:
-                            L_copy.data[(L_copy.row == row) & (L_copy.col == col)] = 0
-                            U_copy.data[(U_copy.row == row) & (U_copy.col == col)] = 0
+                            L_copy.data[(L_copy.row == row_np) & (L_copy.col == col_np)] = 0
+                            U_copy.data[(U_copy.row == row_np) & (U_copy.col == col_np)] = 0
                     #sampled_matrix = update_edges_and_convert_to_sparse(batch['data'], sampled_trajectory, batch['matrix_sq_side'])
                     #sampled_csr = torch_sparse_to_csr(sampled_matrix, batch['matrix_sq_side'])
                     L_copy = L_copy.tocsc()
@@ -324,7 +335,7 @@ class GFlowNet(pl.LightningModule):
                     _, _, sparse_iterations, sparse_time = solve_with_gmres(batch['original_csr'], batch['b_vector'], M=sampled_M, max_iters=batch['matrix_sq_side'])
                     print(f"GMRES sparse preconditioner")
                     filename = batch['filename']
-                    num_non_zeros = batch['original_csr'].nnz
+                    num_non_zeros = batch['starting_matrix']._values().numel()
                     trajectory_length = len(sampled_trajectory)
 
                     
@@ -338,6 +349,7 @@ class GFlowNet(pl.LightningModule):
                         "ilu_time": ilu_time,
                         "sparse_iterations": sparse_iterations,
                         "sparse_time": sparse_time,
+                        "sample_time": sample_time
                     })
 
         results.append(batch_results)
@@ -378,8 +390,13 @@ class GFlowNet(pl.LightningModule):
         """
         Function to sample a trajectory from the GFlowNet model.
         """
+        device = next(self.forward_policy.parameters()).device
+        for key in batch:
+            if isinstance(batch[key], torch.Tensor):
+                batch[key] = batch[key].to(device)
         trajectory = []
         current_state = batch['data']
+        current_state = current_state.to(device)
         terminated = False
         while not terminated:
             action_probs, flow, alpha = self.forward_policy(current_state, actions=trajectory)
@@ -403,7 +420,7 @@ class GFlowNet(pl.LightningModule):
             'filename', 'num_non_zeros', 'trajectory_length',
             'original_iterations', 'original_time',
             'ilu_iterations', 'ilu_time',
-            'sparse_iterations', 'sparse_time'
+            'sparse_iterations', 'sparse_time', 'sample_time'
         ]
 
         # Open the CSV file in write mode
